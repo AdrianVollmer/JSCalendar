@@ -102,6 +102,7 @@ async fn do_login(state: AppState, req: LoginRequest) -> Result<(Cookie<'static>
         .calendars_account_id()
         .ok_or("server does not advertise JMAP Calendars support")?
         .to_string();
+    let contacts_account_id = session.contacts_account_id().map(|s| s.to_string());
     let username = session.username.clone();
 
     let sid = Uuid::new_v4().to_string();
@@ -111,6 +112,7 @@ async fn do_login(state: AppState, req: LoginRequest) -> Result<(Cookie<'static>
             client,
             account_id,
             username: username.clone(),
+            contacts_account_id,
         },
     );
 
@@ -147,6 +149,7 @@ pub struct AuthedSession {
     pub client: Client,
     pub account_id: String,
     pub username: String,
+    pub contacts_account_id: Option<String>,
 }
 
 impl<S> FromRequestParts<S> for AuthedSession
@@ -166,6 +169,7 @@ where
             client: session.client.clone(),
             account_id: session.account_id.clone(),
             username: session.username.clone(),
+            contacts_account_id: session.contacts_account_id.clone(),
         })
     }
 }

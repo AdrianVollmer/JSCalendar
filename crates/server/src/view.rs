@@ -9,6 +9,11 @@ pub const HOUR_HEIGHT_PX: f64 = 48.0;
 const PALETTE: [&str; 8] = [
     "#6366f1", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#14b8a6",
 ];
+pub const BIRTHDAY_COLOR: &str = "#f43f5e";
+/// Synthetic calendar id used purely for the visibility-toggle machinery —
+/// birthdays aren't a real JMAP calendar, but reusing the same "which ids
+/// are visible" URL state means no separate toggle plumbing is needed.
+pub const BIRTHDAY_PSEUDO_ID: &str = "birthdays";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ViewKind {
@@ -16,6 +21,7 @@ pub enum ViewKind {
     Week,
     Day,
     Agenda,
+    Contacts,
 }
 
 impl ViewKind {
@@ -25,6 +31,7 @@ impl ViewKind {
             ViewKind::Week => "week",
             ViewKind::Day => "day",
             ViewKind::Agenda => "agenda",
+            ViewKind::Contacts => "contacts",
         }
     }
 
@@ -33,8 +40,15 @@ impl ViewKind {
             "week" => ViewKind::Week,
             "day" => ViewKind::Day,
             "agenda" => ViewKind::Agenda,
+            "contacts" => ViewKind::Contacts,
             _ => ViewKind::Month,
         }
+    }
+
+    /// Whether this view is anchored to `date` (so prev/next/today make
+    /// sense) as opposed to a flat list like the contacts view.
+    pub fn is_dated(&self) -> bool {
+        !matches!(self, ViewKind::Contacts)
     }
 }
 
@@ -110,6 +124,7 @@ impl ViewParams {
             ViewKind::Week => self.date - ChronoDuration::days(7),
             ViewKind::Day => self.date - ChronoDuration::days(1),
             ViewKind::Agenda => self.date - ChronoDuration::days(30),
+            ViewKind::Contacts => self.date,
         }
     }
 
@@ -122,6 +137,7 @@ impl ViewParams {
             ViewKind::Week => self.date + ChronoDuration::days(7),
             ViewKind::Day => self.date + ChronoDuration::days(1),
             ViewKind::Agenda => self.date + ChronoDuration::days(30),
+            ViewKind::Contacts => self.date,
         }
     }
 
@@ -145,6 +161,7 @@ impl ViewParams {
                 }
             }
             ViewKind::Agenda => "Agenda".to_string(),
+            ViewKind::Contacts => "Contacts".to_string(),
         }
     }
 }
@@ -179,6 +196,11 @@ pub fn display_range(params: &ViewParams) -> (NaiveDateTime, NaiveDateTime) {
             params.date.and_hms_opt(0, 0, 0).unwrap(),
             (params.date + ChronoDuration::days(30)).and_hms_opt(0, 0, 0).unwrap(),
         ),
+        // Not date-anchored; callers skip fetching events for this view.
+        ViewKind::Contacts => (
+            params.date.and_hms_opt(0, 0, 0).unwrap(),
+            params.date.and_hms_opt(0, 0, 0).unwrap(),
+        ),
     }
 }
 
@@ -192,12 +214,35 @@ pub struct EventView {
     pub title: String,
     pub color: String,
     pub all_day: bool,
+    /// Birthdays are displayed alongside real events but aren't editable —
+    /// they're derived from contact data, not a JMAP calendar object.
+    pub is_birthday: bool,
     pub time_label: String,
     pub edit_href: String,
     pub top_px: f64,
     pub height_px: f64,
     pub left_pct: f64,
     pub width_pct: f64,
+}
+
+fn birthday_event_view(occ: &jmap_client::jscontact::BirthdayOccurrence) -> EventView {
+    let title = match occ.turns {
+        Some(age) => format!("\u{1f382} {} turns {}", occ.name, age),
+        None => format!("\u{1f382} {}", occ.name),
+    };
+    EventView {
+        id: format!("bday-{}", occ.uid),
+        title,
+        color: BIRTHDAY_COLOR.to_string(),
+        all_day: true,
+        is_birthday: true,
+        time_label: "Birthday".to_string(),
+        edit_href: String::new(),
+        top_px: 0.0,
+        height_px: HOUR_HEIGHT_PX,
+        left_pct: 0.0,
+        width_pct: 100.0,
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -329,6 +374,7 @@ fn to_event_view(l: &Localized, calendars: &[Calendar]) -> EventView {
         title: l.event.title.clone().filter(|t| !t.is_empty()).unwrap_or_else(|| "(untitled)".to_string()),
         color: calendar_color(calendar, &l.calendar_id),
         all_day: l.all_day,
+        is_birthday: false,
         time_label: if l.all_day {
             "All day".to_string()
         } else {
@@ -397,9 +443,19 @@ fn layout_overlaps(events: &mut [EventView]) {
 pub struct BuildInputs<'a> {
     pub events: &'a [CalendarEvent],
     pub calendars: &'a [Calendar],
+    pub birthdays: &'a [jmap_client::jscontact::BirthdayOccurrence],
     pub viewer_tz: Tz,
     pub params: &'a ViewParams,
     pub today: NaiveDate,
+}
+
+fn birthdays_on(inputs: &BuildInputs, date: NaiveDate) -> Vec<EventView> {
+    inputs
+        .birthdays
+        .iter()
+        .filter(|b| b.date == date)
+        .map(birthday_event_view)
+        .collect()
 }
 
 pub struct MonthView {
@@ -419,11 +475,13 @@ pub fn build_month(inputs: &BuildInputs) -> MonthView {
     while cursor < grid_end {
         let mut week = Vec::new();
         for _ in 0..7 {
-            let day_events: Vec<EventView> = localized
-                .iter()
-                .filter(|l| l.start.date() == cursor)
-                .map(|l| to_event_view(l, inputs.calendars))
-                .collect();
+            let mut day_events: Vec<EventView> = birthdays_on(inputs, cursor);
+            day_events.extend(
+                localized
+                    .iter()
+                    .filter(|l| l.start.date() == cursor)
+                    .map(|l| to_event_view(l, inputs.calendars)),
+            );
             let more_count = day_events.len().saturating_sub(4);
             week.push(DayCell {
                 day_num: cursor.day(),
@@ -458,7 +516,8 @@ pub fn build_week(inputs: &BuildInputs) -> WeekView {
     let mut days = Vec::new();
     for i in 0..7 {
         let date = start + ChronoDuration::days(i);
-        let (mut all_day, mut timed): (Vec<EventView>, Vec<EventView>) = (Vec::new(), Vec::new());
+        let mut all_day: Vec<EventView> = birthdays_on(inputs, date);
+        let mut timed: Vec<EventView> = Vec::new();
         for l in localized.iter().filter(|l| l.start.date() == date) {
             let ev = to_event_view(l, inputs.calendars);
             if l.all_day {
@@ -491,7 +550,8 @@ pub fn build_day(inputs: &BuildInputs) -> DayViewModel {
     let range_end = (date + ChronoDuration::days(1)).and_hms_opt(0, 0, 0).unwrap();
     let localized = localize_events(inputs.events, &inputs.params.visible, inputs.viewer_tz, range_start, range_end);
 
-    let (mut all_day, mut timed): (Vec<EventView>, Vec<EventView>) = (Vec::new(), Vec::new());
+    let mut all_day: Vec<EventView> = birthdays_on(inputs, date);
+    let mut timed: Vec<EventView> = Vec::new();
     for l in &localized {
         let ev = to_event_view(l, inputs.calendars);
         if l.all_day {
@@ -530,10 +590,15 @@ pub fn build_agenda(inputs: &BuildInputs) -> AgendaView {
     let range_end = (start + ChronoDuration::days(30)).and_hms_opt(0, 0, 0).unwrap();
     let localized = localize_events(inputs.events, &inputs.params.visible, inputs.viewer_tz, range_start, range_end);
 
+    // Birthdays are listed first among that day's events (stable sort keeps
+    // them ahead of same-date real events).
+    let mut combined: Vec<(NaiveDate, EventView)> =
+        inputs.birthdays.iter().map(|b| (b.date, birthday_event_view(b))).collect();
+    combined.extend(localized.iter().map(|l| (l.start.date(), to_event_view(l, inputs.calendars))));
+    combined.sort_by_key(|(date, _)| *date);
+
     let mut groups: Vec<AgendaGroup> = Vec::new();
-    for l in &localized {
-        let date = l.start.date();
-        let ev = to_event_view(l, inputs.calendars);
+    for (date, ev) in combined {
         if let Some(last) = groups.last_mut() {
             if last.date == date {
                 last.events.push(ev);

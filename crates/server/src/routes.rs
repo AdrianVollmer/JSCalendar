@@ -29,21 +29,32 @@ fn today_in(tz: Tz) -> NaiveDate {
     chrono::Utc::now().with_timezone(&tz).date_naive()
 }
 
-fn resolve_view_params(raw: &RawViewQuery, calendars: &[Calendar], today: NaiveDate) -> ViewParams {
+fn resolve_view_params(
+    raw: &RawViewQuery,
+    calendars: &[Calendar],
+    today: NaiveDate,
+    has_contacts: bool,
+) -> ViewParams {
     let view = raw.view.as_deref().map(ViewKind::parse).unwrap_or(ViewKind::Month);
     let date = raw
         .date
         .as_deref()
         .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
         .unwrap_or(today);
-    let all_calendar_ids: Vec<String> = calendars.iter().filter_map(|c| c.id.clone()).collect();
+    let mut all_calendar_ids: Vec<String> = calendars.iter().filter_map(|c| c.id.clone()).collect();
+    if has_contacts {
+        all_calendar_ids.push(view::BIRTHDAY_PSEUDO_ID.to_string());
+    }
     let visible: HashSet<String> = match &raw.cal {
         Some(s) => s.split(',').filter(|p| !p.is_empty()).map(|p| p.to_string()).collect(),
-        None => calendars
-            .iter()
-            .filter(|c| c.is_visible)
-            .filter_map(|c| c.id.clone())
-            .collect(),
+        None => {
+            let mut v: HashSet<String> =
+                calendars.iter().filter(|c| c.is_visible).filter_map(|c| c.id.clone()).collect();
+            if has_contacts {
+                v.insert(view::BIRTHDAY_PSEUDO_ID.to_string());
+            }
+            v
+        }
     };
     ViewParams {
         view,
@@ -64,6 +75,21 @@ async fn fetch_events(session: &AuthedSession, state: &AppState, params: &ViewPa
         .query_events(&session.account_id, None, Some(&after), Some(&before))
         .await?;
     Ok(events)
+}
+
+async fn fetch_birthdays(
+    session: &AuthedSession,
+    params: &ViewParams,
+) -> Result<Vec<jmap_client::jscontact::BirthdayOccurrence>, AppError> {
+    if !params.visible.contains(view::BIRTHDAY_PSEUDO_ID) {
+        return Ok(Vec::new());
+    }
+    let Some(contacts_account_id) = &session.contacts_account_id else {
+        return Ok(Vec::new());
+    };
+    let (range_start, range_end) = view::display_range(params);
+    let cards = session.client.get_contact_cards(contacts_account_id).await?;
+    Ok(jmap_client::jscontact::expand_birthdays(&cards, range_start.date(), range_end.date()))
 }
 
 #[derive(Template)]
@@ -95,6 +121,30 @@ struct AgendaTemplate {
     groups: Vec<view::AgendaGroup>,
 }
 
+struct ContactRow {
+    name: String,
+    initial: String,
+    email: Option<String>,
+    birthday_label: Option<String>,
+}
+
+#[derive(Template)]
+#[template(path = "view_contacts.html")]
+struct ContactsTemplate {
+    contacts: Vec<ContactRow>,
+}
+
+fn birthday_label(card: &jmap_client::jscontact::Card) -> Option<String> {
+    let anniversaries = card.anniversaries.as_ref()?;
+    let birth = anniversaries.values().find(|a| a.kind.as_deref() == Some("birth"))?;
+    let (month, day, year) = birth.date.month_day_year()?;
+    let date = NaiveDate::from_ymd_opt(year.unwrap_or(2000), month, day)?;
+    Some(match year {
+        Some(y) => format!("{} {}", date.format("%B %-d"), y),
+        None => date.format("%B %-d").to_string(),
+    })
+}
+
 async fn render_fragment(
     session: &AuthedSession,
     state: &AppState,
@@ -102,10 +152,36 @@ async fn render_fragment(
     params: &ViewParams,
     today: NaiveDate,
 ) -> Result<String, AppError> {
+    if params.view == ViewKind::Contacts {
+        let cards = match &session.contacts_account_id {
+            Some(id) => session.client.get_contact_cards(id).await?,
+            None => Vec::new(),
+        };
+        let mut contacts: Vec<ContactRow> = cards
+            .iter()
+            .map(|c| {
+                let name = c.display_name();
+                let initial = name.chars().next().unwrap_or('?').to_uppercase().to_string();
+                ContactRow {
+                    initial,
+                    name,
+                    email: c.primary_email().map(|s| s.to_string()),
+                    birthday_label: birthday_label(c),
+                }
+            })
+            .collect();
+        contacts.sort_by(|a, b| a.name.cmp(&b.name));
+        return ContactsTemplate { contacts }
+            .render()
+            .map_err(|e| AppError::bad_request(format!("template error: {e}")));
+    }
+
     let events = fetch_events(session, state, params).await?;
+    let birthdays = fetch_birthdays(session, params).await?;
     let inputs = view::BuildInputs {
         events: &events,
         calendars,
+        birthdays: &birthdays,
         viewer_tz: state.viewer_tz,
         params,
         today,
@@ -137,6 +213,7 @@ async fn render_fragment(
             let a = view::build_agenda(&inputs);
             AgendaTemplate { groups: a.groups }.render()
         }
+        ViewKind::Contacts => unreachable!("handled above"),
     };
     html.map_err(|e| AppError::bad_request(format!("template error: {e}")))
 }
@@ -155,7 +232,7 @@ struct SidebarCalendarVM {
     toggle_href: String,
 }
 
-fn sidebar_calendars(calendars: &[Calendar], params: &ViewParams) -> Vec<SidebarCalendarVM> {
+fn sidebar_calendars(calendars: &[Calendar], params: &ViewParams, has_contacts: bool) -> Vec<SidebarCalendarVM> {
     let mut items: Vec<SidebarCalendarVM> = calendars
         .iter()
         .filter_map(|c| {
@@ -170,23 +247,36 @@ fn sidebar_calendars(calendars: &[Calendar], params: &ViewParams) -> Vec<Sidebar
         })
         .collect();
     items.sort_by(|a, b| a.name.cmp(&b.name));
+    if has_contacts {
+        items.push(SidebarCalendarVM {
+            id: view::BIRTHDAY_PSEUDO_ID.to_string(),
+            name: "Birthdays".to_string(),
+            color: view::BIRTHDAY_COLOR.to_string(),
+            visible: params.visible.contains(view::BIRTHDAY_PSEUDO_ID),
+            toggle_href: params.toggle_href(view::BIRTHDAY_PSEUDO_ID),
+        });
+    }
     items
 }
 
-fn view_links(params: &ViewParams) -> Vec<ViewLink> {
-    [
+fn view_links(params: &ViewParams, has_contacts: bool) -> Vec<ViewLink> {
+    let mut kinds = vec![
         (ViewKind::Month, "Month"),
         (ViewKind::Week, "Week"),
         (ViewKind::Day, "Day"),
         (ViewKind::Agenda, "Agenda"),
-    ]
-    .into_iter()
-    .map(|(kind, label)| ViewLink {
-        label,
-        href: params.nav_href(kind, params.date),
-        active: kind == params.view,
-    })
-    .collect()
+    ];
+    if has_contacts {
+        kinds.push((ViewKind::Contacts, "Contacts"));
+    }
+    kinds
+        .into_iter()
+        .map(|(kind, label)| ViewLink {
+            label,
+            href: params.nav_href(kind, params.date),
+            active: kind == params.view,
+        })
+        .collect()
 }
 
 /// The sidebar/topbar/view region re-rendered on *every* navigation (view
@@ -196,6 +286,7 @@ fn view_links(params: &ViewParams) -> Vec<ViewLink> {
 struct ShellParts {
     title: String,
     username: String,
+    is_dated_view: bool,
     calendars: Vec<SidebarCalendarVM>,
     view_links: Vec<ViewLink>,
     prev_href: String,
@@ -210,6 +301,7 @@ struct ShellParts {
 struct AppShellTemplate {
     title: String,
     username: String,
+    is_dated_view: bool,
     calendars: Vec<SidebarCalendarVM>,
     view_links: Vec<ViewLink>,
     prev_href: String,
@@ -225,6 +317,7 @@ struct AppShellTemplate {
 struct AppInnerTemplate {
     title: String,
     username: String,
+    is_dated_view: bool,
     calendars: Vec<SidebarCalendarVM>,
     view_links: Vec<ViewLink>,
     prev_href: String,
@@ -239,6 +332,7 @@ impl ShellParts {
         AppShellTemplate {
             title: self.title,
             username: self.username,
+            is_dated_view: self.is_dated_view,
             calendars: self.calendars,
             view_links: self.view_links,
             prev_href: self.prev_href,
@@ -254,6 +348,7 @@ impl ShellParts {
         AppInnerTemplate {
             title: self.title,
             username: self.username,
+            is_dated_view: self.is_dated_view,
             calendars: self.calendars,
             view_links: self.view_links,
             prev_href: self.prev_href,
@@ -272,12 +367,14 @@ async fn build_shell_parts(
     params: &ViewParams,
     today: NaiveDate,
 ) -> Result<ShellParts, AppError> {
+    let has_contacts = session.contacts_account_id.is_some();
     let body = render_fragment(session, state, calendars, params, today).await?;
     Ok(ShellParts {
         title: params.title(today),
         username: session.username.clone(),
-        calendars: sidebar_calendars(calendars, params),
-        view_links: view_links(params),
+        is_dated_view: params.view.is_dated(),
+        calendars: sidebar_calendars(calendars, params, has_contacts),
+        view_links: view_links(params, has_contacts),
         prev_href: params.nav_href(params.view, params.prev_date()),
         next_href: params.nav_href(params.view, params.next_date()),
         today_href: params.nav_href(params.view, today),
@@ -298,7 +395,7 @@ pub async fn app_view(
 ) -> Result<Response, AppError> {
     let today = today_in(state.viewer_tz);
     let calendars = session.client.get_calendars(&session.account_id).await?;
-    let params = resolve_view_params(&raw, &calendars, today);
+    let params = resolve_view_params(&raw, &calendars, today, session.contacts_account_id.is_some());
 
     let parts = build_shell_parts(&session, &state, &calendars, &params, today).await?;
     if is_hx(&headers) {
@@ -514,7 +611,7 @@ pub async fn event_new_form(
 ) -> Result<Response, AppError> {
     let today = today_in(state.viewer_tz);
     let calendars = session.client.get_calendars(&session.account_id).await?;
-    let params = resolve_view_params(&raw, &calendars, today);
+    let params = resolve_view_params(&raw, &calendars, today, session.contacts_account_id.is_some());
     let form = blank_form(&calendars, &params, state.viewer_tz, None);
     let modal_html = form.render().map_err(|e| AppError::bad_request(e.to_string()))?;
 
@@ -536,7 +633,7 @@ pub async fn event_edit_form(
 ) -> Result<Response, AppError> {
     let today = today_in(state.viewer_tz);
     let calendars = session.client.get_calendars(&session.account_id).await?;
-    let params = resolve_view_params(&raw, &calendars, today);
+    let params = resolve_view_params(&raw, &calendars, today, session.contacts_account_id.is_some());
     let events = session.client.get_events(&session.account_id, &[id]).await?;
     let event = events.first().ok_or(jmap_client::Error::NotFound)?;
     let form = event_to_form(event, &calendars, &params, None);
@@ -679,7 +776,7 @@ async fn mutation_response(
             date: Some(back_date.to_string()),
             cal: Some(back_cal.to_string()),
         };
-        let params = resolve_view_params(&raw, &calendars, today);
+        let params = resolve_view_params(&raw, &calendars, today, session.contacts_account_id.is_some());
         let fragment = render_fragment(session, state, &calendars, &params, today).await?;
         let body = format!(r#"<div id="view" class="view-container" hx-swap-oob="true">{fragment}</div>"#);
         Ok(Html(body).into_response())
@@ -738,7 +835,7 @@ async fn render_form_error(
         date: Some(form.back_date.clone()),
         cal: Some(form.back_cal.clone()),
     };
-    let params = resolve_view_params(&raw, &calendars, today);
+    let params = resolve_view_params(&raw, &calendars, today, session.contacts_account_id.is_some());
     let mut tpl = blank_form(&calendars, &params, state.viewer_tz, Some(message));
     tpl.is_edit = is_edit;
     tpl.event_id = event_id.unwrap_or_default();

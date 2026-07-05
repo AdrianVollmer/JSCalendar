@@ -34,11 +34,13 @@
 
   <main class="main">
     <header class="topbar">
+      {% if is_dated_view %}
       <div class="topbar-nav">
         <a class="btn btn-ghost" href="{{ today_href }}" hx-get="{{ today_href }}" hx-target="#app-root" hx-push-url="true" hx-swap="outerHTML">Today</a>
         <a class="btn btn-icon" href="{{ prev_href }}" hx-get="{{ prev_href }}" hx-target="#app-root" hx-push-url="true" hx-swap="outerHTML" aria-label="Previous">‹</a>
         <a class="btn btn-icon" href="{{ next_href }}" hx-get="{{ next_href }}" hx-target="#app-root" hx-push-url="true" hx-swap="outerHTML" aria-label="Next">›</a>
       </div>
+      {% endif %}
       <h1 class="topbar-title">{{ title }}</h1>
       <button type="button" class="btn btn-icon theme-toggle" id="theme-toggle" aria-label="Toggle dark mode">◐</button>
     </header>

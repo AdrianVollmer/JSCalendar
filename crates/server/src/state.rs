@@ -9,6 +9,9 @@ pub struct UserSession {
     pub client: Client,
     pub account_id: String,
     pub username: String,
+    /// `None` when the JMAP server doesn't advertise Contacts support —
+    /// birthdays and the contacts list are simply hidden in that case.
+    pub contacts_account_id: Option<String>,
 }
 
 /// Shared server state: an in-memory table of logged-in sessions, keyed by

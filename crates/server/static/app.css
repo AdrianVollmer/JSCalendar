@@ -226,6 +226,27 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .agenda-time { color: var(--text-muted); font-size: 0.85em; width: 5.5em; flex-shrink: 0; }
 .agenda-title { font-weight: 500; }
 
+/* ---- birthdays (derived from contacts, not a real calendar item) ---- */
+.birthday-pill { cursor: default; }
+.birthday-pill:hover { border-color: var(--border); }
+.agenda-event.birthday-pill:hover { border-color: var(--border); }
+
+/* ---- contacts view ---- */
+.contacts-view { padding: 1.2rem 1.5rem; max-width: 640px; margin: 0 auto; }
+.contacts-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.3rem; }
+.contact-row {
+  display: flex; align-items: center; gap: 0.8em; padding: 0.6em 0.8em; border-radius: var(--radius-md);
+  background: var(--bg-elevated); border: 1px solid var(--border);
+}
+.contact-avatar {
+  display: flex; align-items: center; justify-content: center; width: 2.2em; height: 2.2em; border-radius: 50%;
+  background: var(--today-bg); color: var(--accent); font-weight: 600; flex-shrink: 0;
+}
+.contact-main { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.contact-name { font-weight: 500; }
+.contact-email { color: var(--text-muted); font-size: 0.85em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.contact-birthday { color: var(--text-muted); font-size: 0.85em; flex-shrink: 0; }
+
 /* ---- event dialog ---- */
 .modal-backdrop {
   position: fixed; inset: 0; background: rgba(10, 12, 20, 0.45); backdrop-filter: blur(2px);

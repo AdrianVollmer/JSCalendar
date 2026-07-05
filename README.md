@@ -2,17 +2,20 @@
 
 A server-rendered JMAP calendar client, written in Rust.
 
-It speaks [JMAP Core](https://www.rfc-editor.org/rfc/rfc8620) and
-[JMAP for Calendars](https://www.rfc-editor.org/rfc/rfc9670) to talk to any
-compliant server, and renders [JSCalendar](https://www.rfc-editor.org/rfc/rfc8984)
-events (RFC 8984) into month/week/day/agenda views.
+It speaks [JMAP Core](https://www.rfc-editor.org/rfc/rfc8620),
+[JMAP for Calendars](https://www.rfc-editor.org/rfc/rfc9670), and JMAP
+Contacts to talk to any compliant server, rendering
+[JSCalendar](https://www.rfc-editor.org/rfc/rfc8984) events (RFC 8984) into
+month/week/day/agenda views, plus [JSContact](https://www.rfc-editor.org/rfc/rfc9553)
+(RFC 9553) contacts and their birthdays alongside them.
 
 ## Architecture
 
-- **`crates/jmap-client`** — a standalone JMAP + JSCalendar library: session
-  discovery, the Core request/response envelope, `Calendar`/`CalendarEvent`
-  data types, recurrence-rule expansion, and IANA time zone conversion. No
-  web framework dependency; usable on its own.
+- **`crates/jmap-client`** — a standalone JMAP + JSCalendar/JSContact
+  library: session discovery, the Core request/response envelope,
+  `Calendar`/`CalendarEvent` and `AddressBook`/`Card` (contacts) data types,
+  recurrence-rule expansion, birthday-anniversary expansion, and IANA time
+  zone conversion. No web framework dependency; usable on its own.
 - **`crates/server`** — an [axum](https://github.com/tokio-rs/axum) web app
   that renders HTML server-side with [Askama](https://github.com/askama-rs/askama)
   templates and layers [htmx](https://htmx.org) on top for snappy partial
@@ -67,6 +70,13 @@ username/password, or an API token.
   app shell for instant loads and offline resilience (calendar data itself
   is always live — there's no offline data cache, since it belongs to your
   JMAP server).
+- Contacts: a read-only "Contacts" view (`AddressBook/get` + `ContactCard/get`)
+  listing name/email, and a **Birthdays** entry in the sidebar — toggle it
+  like any other calendar — that overlays each contact's `birth` anniversary
+  (RFC 9553 `anniversaries`) as a recurring, non-editable all-day item across
+  month/week/day/agenda views, with the contact's age shown when their
+  birth year is known. Both are hidden automatically if the JMAP server
+  doesn't advertise Contacts support.
 
 ## Known limitations
 
@@ -82,6 +92,10 @@ username/password, or an API token.
   the server-rendered views.
 - Participants/attendees, alerts, and sharing (`Calendar/set` `shareWith`)
   are modeled in `jmap-client` but not surfaced in the UI yet.
+- Contacts are read-only: no create/edit/delete UI, and no address-book
+  management. `ContactCard/get` fetches every card on each request, since
+  there's no server-side filter for "has a birthday in this range" — fine
+  for a personal address book, but it won't scale to a very large one.
 
 ## Development
 

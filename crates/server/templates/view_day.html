@@ -9,7 +9,11 @@
     <div class="time-gutter-spacer">All day</div>
     <div class="time-allday-col">
       {% for ev in day.all_day_events %}
+      {% if ev.is_birthday %}
+      <span class="event-pill birthday-pill" style="--cal-color: {{ ev.color }}">{{ ev.title }}</span>
+      {% else %}
       <a class="event-pill" style="--cal-color: {{ ev.color }}" data-event-id="{{ ev.id }}" href="{{ ev.edit_href }}" hx-get="{{ ev.edit_href }}" hx-target="#modal-root" hx-swap="innerHTML">{{ ev.title }}</a>
+      {% endif %}
       {% endfor %}
     </div>
   </div>

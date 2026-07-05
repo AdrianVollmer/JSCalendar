@@ -2,6 +2,7 @@ pub mod client;
 pub mod duration;
 pub mod error;
 pub mod jscalendar;
+pub mod jscontact;
 pub mod protocol;
 pub mod recurrence;
 pub mod tz;

@@ -8,6 +8,7 @@ use serde_json::Value;
 
 pub const CAPABILITY_CORE: &str = "urn:ietf:params:jmap:core";
 pub const CAPABILITY_CALENDARS: &str = "urn:ietf:params:jmap:calendars";
+pub const CAPABILITY_CONTACTS: &str = "urn:ietf:params:jmap:contacts";
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Session {
@@ -32,12 +33,28 @@ impl Session {
     /// for the calendars capability if advertised, else the first account
     /// that supports it, else the first account at all.
     pub fn calendars_account_id(&self) -> Option<&str> {
-        if let Some(id) = self.primary_accounts.get(CAPABILITY_CALENDARS) {
+        self.account_id_for(CAPABILITY_CALENDARS)
+    }
+
+    /// The account id to use for contacts operations, or `None` if the
+    /// server doesn't advertise JMAP Contacts support at all.
+    pub fn contacts_account_id(&self) -> Option<&str> {
+        if let Some(id) = self.primary_accounts.get(CAPABILITY_CONTACTS) {
             return Some(id.as_str());
         }
         self.accounts
             .iter()
-            .find(|(_, a)| a.account_capabilities.contains_key(CAPABILITY_CALENDARS))
+            .find(|(_, a)| a.account_capabilities.contains_key(CAPABILITY_CONTACTS))
+            .map(|(id, _)| id.as_str())
+    }
+
+    fn account_id_for(&self, capability: &str) -> Option<&str> {
+        if let Some(id) = self.primary_accounts.get(capability) {
+            return Some(id.as_str());
+        }
+        self.accounts
+            .iter()
+            .find(|(_, a)| a.account_capabilities.contains_key(capability))
             .map(|(id, _)| id.as_str())
             .or_else(|| self.accounts.keys().next().map(|s| s.as_str()))
     }

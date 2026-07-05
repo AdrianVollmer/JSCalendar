@@ -8,11 +8,18 @@
     <ul class="agenda-list">
       {% for ev in group.events %}
       <li>
+        {% if ev.is_birthday %}
+        <span class="agenda-event birthday-pill" style="--cal-color: {{ ev.color }}">
+          <span class="cal-dot"></span>
+          <span class="agenda-title">{{ ev.title }}</span>
+        </span>
+        {% else %}
         <a class="agenda-event" style="--cal-color: {{ ev.color }}" data-event-id="{{ ev.id }}" href="{{ ev.edit_href }}" hx-get="{{ ev.edit_href }}" hx-target="#modal-root" hx-swap="innerHTML">
           <span class="cal-dot"></span>
           <span class="agenda-time">{{ ev.time_label }}</span>
           <span class="agenda-title">{{ ev.title }}</span>
         </a>
+        {% endif %}
       </li>
       {% endfor %}
     </ul>

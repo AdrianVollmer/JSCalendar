@@ -6,8 +6,9 @@ use url::Url;
 
 use crate::error::Error;
 use crate::jscalendar::{Calendar, CalendarEvent, Id};
+use crate::jscontact::Card;
 use crate::protocol::{
-    MethodCall, Request, Response, Session, CAPABILITY_CALENDARS, CAPABILITY_CORE,
+    MethodCall, Request, Response, Session, CAPABILITY_CALENDARS, CAPABILITY_CONTACTS, CAPABILITY_CORE,
 };
 
 #[derive(Debug, Clone)]
@@ -87,6 +88,12 @@ impl Client {
             .ok_or(Error::UnsupportedAccount("calendars"))
     }
 
+    /// `None` when the server doesn't advertise JMAP Contacts at all —
+    /// callers should treat contacts/birthdays as an optional feature.
+    pub fn contacts_account_id(&self) -> Option<String> {
+        self.session.as_ref().and_then(|s| s.contacts_account_id()).map(|s| s.to_string())
+    }
+
     /// Issue a raw JMAP request: the low-level primitive everything else is
     /// built on, exposed so callers can batch/chain calls themselves.
     pub async fn call(&self, using: Vec<String>, calls: Vec<MethodCall>) -> Result<Response, Error> {
@@ -110,6 +117,10 @@ impl Client {
 
     fn using(&self) -> Vec<String> {
         vec![CAPABILITY_CORE.to_string(), CAPABILITY_CALENDARS.to_string()]
+    }
+
+    fn using_contacts(&self) -> Vec<String> {
+        vec![CAPABILITY_CORE.to_string(), CAPABILITY_CONTACTS.to_string()]
     }
 
     // ---- Calendars ----------------------------------------------------
@@ -339,6 +350,47 @@ impl Client {
             return Err(Error::Protocol(format!("event not destroyed: {err}")));
         }
         Ok(())
+    }
+
+    // ---- Contacts -------------------------------------------------------
+
+    pub async fn get_address_books(&self, account_id: &str) -> Result<Vec<crate::jscontact::AddressBook>, Error> {
+        let resp = self
+            .call(
+                self.using_contacts(),
+                vec![MethodCall(
+                    "AddressBook/get".into(),
+                    json!({ "accountId": account_id, "ids": null }),
+                    "c0".into(),
+                )],
+            )
+            .await?;
+        let result = resp.result_for("c0")?;
+        let list = result
+            .get("list")
+            .ok_or_else(|| Error::Protocol("missing list".into()))?;
+        Ok(serde_json::from_value(list.clone())?)
+    }
+
+    /// Fetches every contact card in the account. There is no time-range
+    /// filter on `ContactCard/query` the way there is for events, so
+    /// birthday lookups need the full set to expand client-side.
+    pub async fn get_contact_cards(&self, account_id: &str) -> Result<Vec<Card>, Error> {
+        let resp = self
+            .call(
+                self.using_contacts(),
+                vec![MethodCall(
+                    "ContactCard/get".into(),
+                    json!({ "accountId": account_id, "ids": null }),
+                    "c0".into(),
+                )],
+            )
+            .await?;
+        let result = resp.result_for("c0")?;
+        let list = result
+            .get("list")
+            .ok_or_else(|| Error::Protocol("missing list".into()))?;
+        Ok(serde_json::from_value(list.clone())?)
     }
 }
 

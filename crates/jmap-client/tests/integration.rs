@@ -8,6 +8,7 @@ async fn session_mock(server: &MockServer) {
         "capabilities": {
             "urn:ietf:params:jmap:core": {},
             "urn:ietf:params:jmap:calendars": {},
+            "urn:ietf:params:jmap:contacts": {},
         },
         "accounts": {
             "a1": {
@@ -15,12 +16,14 @@ async fn session_mock(server: &MockServer) {
                 "isPersonal": true,
                 "isReadOnly": false,
                 "accountCapabilities": {
-                    "urn:ietf:params:jmap:calendars": {}
+                    "urn:ietf:params:jmap:calendars": {},
+                    "urn:ietf:params:jmap:contacts": {}
                 }
             }
         },
         "primaryAccounts": {
-            "urn:ietf:params:jmap:calendars": "a1"
+            "urn:ietf:params:jmap:calendars": "a1",
+            "urn:ietf:params:jmap:contacts": "a1"
         },
         "username": "user@example.com",
         "apiUrl": format!("{}/api", server.uri()),
@@ -230,4 +233,56 @@ async fn destroy_event_reports_protocol_error_on_failure() {
 
     let err = client.destroy_event("a1", "evt1").await.unwrap_err();
     assert!(matches!(err, jmap_client::Error::Protocol(_)));
+}
+
+#[tokio::test]
+async fn contacts_account_resolves_and_cards_parse_with_birthday() {
+    let server = MockServer::start().await;
+    let client = connected_client(&server).await;
+    assert_eq!(client.contacts_account_id().as_deref(), Some("a1"));
+
+    let body = json!({
+        "methodResponses": [
+            ["ContactCard/get", {
+                "accountId": "a1",
+                "state": "s1",
+                "list": [
+                    {
+                        "@type": "Card",
+                        "version": "1.0",
+                        "id": "card1",
+                        "uid": "card1-uid",
+                        "name": { "@type": "Name", "full": "Ada Lovelace" },
+                        "anniversaries": {
+                            "a1": {
+                                "@type": "Anniversary",
+                                "kind": "birth",
+                                "date": { "@type": "PartialDate", "month": 12, "day": 10 }
+                            }
+                        },
+                        "addressBookIds": { "ab1": true }
+                    }
+                ],
+                "notFound": []
+            }, "c0"]
+        ],
+        "sessionState": "abc123"
+    });
+    Mock::given(method("POST"))
+        .and(path("/api"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(body))
+        .mount(&server)
+        .await;
+
+    let cards = client.get_contact_cards("a1").await.unwrap();
+    assert_eq!(cards.len(), 1);
+    assert_eq!(cards[0].display_name(), "Ada Lovelace");
+
+    let occs = jmap_client::jscontact::expand_birthdays(
+        &cards,
+        chrono::NaiveDate::from_ymd_opt(2026, 12, 1).unwrap(),
+        chrono::NaiveDate::from_ymd_opt(2027, 1, 1).unwrap(),
+    );
+    assert_eq!(occs.len(), 1);
+    assert_eq!(occs[0].name, "Ada Lovelace");
 }
