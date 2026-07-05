@@ -1,0 +1,116 @@
+<div class="modal-backdrop" id="event-dialog-backdrop">
+<dialog class="event-dialog" open aria-label="{% if is_edit %}Edit event{% else %}New event{% endif %}">
+  <form class="event-form"
+    method="post"
+    action="{% if is_edit %}/app/event/{{ event_id }}/edit{% else %}/app/event{% endif %}"
+    {% if is_edit %}hx-patch="/app/event/{{ event_id }}"{% else %}hx-post="/app/event"{% endif %}
+    hx-target="#modal-root" hx-swap="innerHTML">
+
+    <header class="event-form-header">
+      <h2>{% if is_edit %}Edit event{% else %}New event{% endif %}</h2>
+      <a class="btn-icon" href="/app?view={{ back_view }}&amp;date={{ back_date }}&amp;cal={{ back_cal }}" aria-label="Close">✕</a>
+    </header>
+
+    {% if let Some(err) = error %}
+    <p class="form-error" role="alert">{{ err }}</p>
+    {% endif %}
+
+    <input type="hidden" name="back_view" value="{{ back_view }}">
+    <input type="hidden" name="back_date" value="{{ back_date }}">
+    <input type="hidden" name="back_cal" value="{{ back_cal }}">
+
+    <label class="field">
+      <span>Title</span>
+      <input type="text" name="title" value="{{ title }}" required autofocus placeholder="Add a title">
+    </label>
+
+    <div class="field-row">
+      <label class="field">
+        <span>Calendar</span>
+        <select name="calendar_id">
+          {% for cal in calendars %}
+          <option value="{{ cal.id }}" {% if cal.selected %}selected{% endif %}>{{ cal.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="field field-checkbox">
+        <input type="checkbox" name="all_day" value="1" {% if all_day %}checked{% endif %} onchange="this.closest('form').classList.toggle('all-day', this.checked)">
+        <span>All day</span>
+      </label>
+    </div>
+
+    <div class="field-row">
+      <label class="field">
+        <span>Start</span>
+        <input type="date" name="start_date" value="{{ start_date }}" required>
+      </label>
+      <label class="field time-field">
+        <span>&nbsp;</span>
+        <input type="time" name="start_time" value="{{ start_time }}">
+      </label>
+    </div>
+    <div class="field-row">
+      <label class="field">
+        <span>End</span>
+        <input type="date" name="end_date" value="{{ end_date }}" required>
+      </label>
+      <label class="field time-field">
+        <span>&nbsp;</span>
+        <input type="time" name="end_time" value="{{ end_time }}">
+      </label>
+    </div>
+
+    <label class="field">
+      <span>Time zone</span>
+      <select name="timezone">
+        {% for tz in timezones %}
+        <option value="{{ tz.value }}" {% if tz.selected %}selected{% endif %}>{{ tz.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label class="field">
+      <span>Location</span>
+      <input type="text" name="location" value="{{ location }}" placeholder="Optional">
+    </label>
+
+    <label class="field">
+      <span>Description</span>
+      <textarea name="description" rows="3" placeholder="Optional">{{ description }}</textarea>
+    </label>
+
+    <fieldset class="recurrence-fieldset">
+      <legend>Repeat</legend>
+      <div class="field-row">
+        <label class="field">
+          <select name="repeat_freq">
+            <option value="none" {% if repeat_freq == "none" %}selected{% endif %}>Does not repeat</option>
+            <option value="daily" {% if repeat_freq == "daily" %}selected{% endif %}>Daily</option>
+            <option value="weekly" {% if repeat_freq == "weekly" %}selected{% endif %}>Weekly</option>
+            <option value="monthly" {% if repeat_freq == "monthly" %}selected{% endif %}>Monthly</option>
+            <option value="yearly" {% if repeat_freq == "yearly" %}selected{% endif %}>Yearly</option>
+          </select>
+        </label>
+        <label class="field time-field">
+          <span>Every</span>
+          <input type="number" name="repeat_interval" min="1" max="365" value="{{ repeat_interval }}">
+        </label>
+      </div>
+      <div class="field-row repeat-end">
+        <label class="field-inline"><input type="radio" name="repeat_end_mode" value="never" {% if repeat_end_mode == "never" %}checked{% endif %}> Never ends</label>
+        <label class="field-inline"><input type="radio" name="repeat_end_mode" value="count" {% if repeat_end_mode == "count" %}checked{% endif %}> After <input type="number" name="repeat_count" min="1" max="999" value="{{ repeat_count }}" class="inline-number"> times</label>
+        <label class="field-inline"><input type="radio" name="repeat_end_mode" value="until" {% if repeat_end_mode == "until" %}checked{% endif %}> Until <input type="date" name="repeat_until" value="{{ repeat_until }}"></label>
+      </div>
+    </fieldset>
+
+    <footer class="event-form-footer">
+      {% if is_edit %}
+      <button type="submit" formaction="/app/event/{{ event_id }}/delete" formnovalidate hx-delete="/app/event/{{ event_id }}" hx-target="#modal-root" hx-swap="innerHTML" hx-confirm="Delete this event?" class="btn btn-danger">Delete</button>
+      {% endif %}
+      <span class="spacer"></span>
+      <a class="btn btn-ghost" href="/app?view={{ back_view }}&amp;date={{ back_date }}&amp;cal={{ back_cal }}">Cancel</a>
+      <button type="submit" class="btn btn-primary">Save</button>
+    </footer>
+  </form>
+</dialog>
+</div>

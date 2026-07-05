@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Error {{ status }} – JSCalendar{% endblock %}
+{% block body %}
+<main class="error-page">
+  <div class="error-card">
+    <p class="error-status">{{ status }}</p>
+    <p class="error-message">{{ message }}</p>
+    <a class="btn btn-primary" href="/app">Back to calendar</a>
+  </div>
+</main>
+{% endblock %}

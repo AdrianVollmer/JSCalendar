@@ -1,0 +1,26 @@
+[package]
+name = "jscalendar-server"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[[bin]]
+name = "jscalendar-server"
+path = "src/main.rs"
+
+[dependencies]
+jmap-client = { path = "../jmap-client" }
+axum = { version = "0.8", features = ["macros"] }
+axum-extra = { version = "0.10", features = ["cookie"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+tower-http = { version = "0.6", features = ["fs", "trace", "compression-gzip"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+askama = "0.12"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+url = { version = "2", features = ["serde"] }
+uuid = { version = "1", features = ["v4"] }
+dashmap = "6"
+chrono = "0.4"
+chrono-tz = "0.10"

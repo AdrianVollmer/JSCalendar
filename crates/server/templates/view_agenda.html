@@ -1,0 +1,21 @@
+<div class="agenda-view">
+  {% if groups.is_empty() %}
+  <p class="agenda-empty">No events in the next 30 days.</p>
+  {% endif %}
+  {% for group in groups %}
+  <section class="agenda-group">
+    <h2 class="agenda-date">{{ group.label }}</h2>
+    <ul class="agenda-list">
+      {% for ev in group.events %}
+      <li>
+        <a class="agenda-event" style="--cal-color: {{ ev.color }}" data-event-id="{{ ev.id }}" href="{{ ev.edit_href }}" hx-get="{{ ev.edit_href }}" hx-target="#modal-root" hx-swap="innerHTML">
+          <span class="cal-dot"></span>
+          <span class="agenda-time">{{ ev.time_label }}</span>
+          <span class="agenda-title">{{ ev.title }}</span>
+        </a>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endfor %}
+</div>

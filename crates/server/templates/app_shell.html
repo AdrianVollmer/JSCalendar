@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} – JSCalendar{% endblock %}
+{% block body %}
+{% include "app_inner.html" %}
+<div id="modal-root">{% if let Some(m) = modal %}{{ m|safe }}{% endif %}</div>
+{% endblock %}

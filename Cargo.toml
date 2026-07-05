@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/jmap-client",
+    "crates/server",
+]
+
+# The frontend crate targets wasm32-unknown-unknown and is built with trunk,
+# which does not cooperate well with cargo workspaces (different target dirs,
+# different feature resolution). Keep it as an independent crate.
+exclude = ["crates/frontend"]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+version = "0.1.0"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"

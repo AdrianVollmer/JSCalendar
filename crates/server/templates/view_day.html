@@ -1,0 +1,32 @@
+<div class="time-view day-view">
+  <div class="time-view-header">
+    <div class="time-gutter-spacer"></div>
+    <div class="time-day-header {% if day.is_today %}today{% endif %}">
+      <span class="time-day-weekday">{{ day.weekday_label }}</span>
+    </div>
+  </div>
+  <div class="time-view-allday">
+    <div class="time-gutter-spacer">All day</div>
+    <div class="time-allday-col">
+      {% for ev in day.all_day_events %}
+      <a class="event-pill" style="--cal-color: {{ ev.color }}" data-event-id="{{ ev.id }}" href="{{ ev.edit_href }}" hx-get="{{ ev.edit_href }}" hx-target="#modal-root" hx-swap="innerHTML">{{ ev.title }}</a>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="time-grid-scroll">
+    <div class="time-grid time-grid-single" style="--hour-height: 48px;">
+      <div class="time-gutter">
+        {% for h in hours %}<div class="time-gutter-row" id="hour-{{ h.hour }}">{{ h.label }}</div>{% endfor %}
+      </div>
+      <div class="time-column">
+        {% for h in hours %}<div class="hour-line"></div>{% endfor %}
+        {% for ev in day.timed_events %}
+        <a class="timed-event" style="top: {{ ev.top_px }}px; height: {{ ev.height_px }}px; left: {{ ev.left_pct }}%; width: {{ ev.width_pct }}%; --cal-color: {{ ev.color }};" data-event-id="{{ ev.id }}" href="{{ ev.edit_href }}" hx-get="{{ ev.edit_href }}" hx-target="#modal-root" hx-swap="innerHTML">
+          <span class="event-title">{{ ev.title }}</span>
+          <span class="event-time">{{ ev.time_label }}</span>
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>

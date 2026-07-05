@@ -1,0 +1,25 @@
+<div class="month-view">
+  <div class="month-weekdays">
+    {% for label in weekday_labels %}<div class="month-weekday">{{ label }}</div>{% endfor %}
+  </div>
+  <div class="month-grid">
+    {% for week in weeks %}
+      {% for day in week %}
+      <div class="month-cell {% if !day.in_month %}outside{% endif %} {% if day.is_today %}today{% endif %}">
+        <a class="month-daynum" href="/app?view=day&amp;date={{ day.iso }}&amp;cal={{ cal_param }}" hx-get="/app?view=day&amp;date={{ day.iso }}&amp;cal={{ cal_param }}" hx-target="#app-root" hx-push-url="true" hx-swap="outerHTML">{{ day.day_num }}</a>
+        <div class="month-events">
+          {% for ev in day.events %}
+          <a class="event-pill" style="--cal-color: {{ ev.color }}" data-event-id="{{ ev.id }}" href="{{ ev.edit_href }}" hx-get="{{ ev.edit_href }}" hx-target="#modal-root" hx-swap="innerHTML" title="{{ ev.title }}">
+            {% if !ev.all_day %}<span class="event-time">{{ ev.time_label }}</span>{% endif %}
+            <span class="event-title">{{ ev.title }}</span>
+          </a>
+          {% endfor %}
+          {% if day.more_count > 0 %}
+          <a class="event-more" href="/app?view=day&amp;date={{ day.iso }}&amp;cal={{ cal_param }}" hx-get="/app?view=day&amp;date={{ day.iso }}&amp;cal={{ cal_param }}" hx-target="#app-root" hx-push-url="true" hx-swap="outerHTML">+{{ day.more_count }} more</a>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    {% endfor %}
+  </div>
+</div>
