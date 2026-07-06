@@ -403,15 +403,25 @@ impl Client {
     /// Fetches every contact card in the account. There is no time-range
     /// filter on `ContactCard/query` the way there is for events, so
     /// birthday lookups need the full set to expand client-side.
-    pub async fn get_contact_cards(&self, account_id: &str) -> Result<Vec<Card>, Error> {
+    ///
+    /// `properties` restricts which JSContact properties come back (RFC
+    /// 8620 §5.1) — pass e.g. `&["uid", "name", "emails", "anniversaries"]`
+    /// to skip photos, addresses, phone numbers, etc. you don't need,
+    /// which matters once an address book has any real amount of data in
+    /// it. `None` fetches full cards.
+    pub async fn get_contact_cards(
+        &self,
+        account_id: &str,
+        properties: Option<&[&str]>,
+    ) -> Result<Vec<Card>, Error> {
+        let mut args = json!({ "accountId": account_id, "ids": null });
+        if let Some(props) = properties {
+            args["properties"] = json!(props);
+        }
         let resp = self
             .call(
                 self.using_contacts(),
-                vec![MethodCall(
-                    "ContactCard/get".into(),
-                    json!({ "accountId": account_id, "ids": null }),
-                    "c0".into(),
-                )],
+                vec![MethodCall("ContactCard/get".into(), args, "c0".into())],
             )
             .await?;
         let result = resp.result_for("c0")?;

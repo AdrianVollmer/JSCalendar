@@ -92,7 +92,51 @@ async fn fetch_events(
     Ok(events)
 }
 
+/// `ContactCard/get` has no filter for "changed" or "has a birthday in this
+/// range", so every fetch pulls the whole address book — restricting to
+/// just what the UI needs (no photos, phone numbers, addresses, etc.) keeps
+/// each of those fetches as cheap as this protocol allows.
+const CONTACT_PROPERTIES: &[&str] = &["id", "uid", "name", "emails", "anniversaries"];
+
+/// Fetches every contact card for the session's account, reusing a recent
+/// result across calendar-view renders instead of re-fetching on every one
+/// (birthdays rarely change, so a full re-fetch per render is pure waste —
+/// see `state::CONTACTS_CACHE_TTL_SECS`).
+async fn get_contact_cards_cached(
+    state: &AppState,
+    session: &AuthedSession,
+    contacts_account_id: &str,
+) -> Result<Vec<jmap_client::jscontact::Card>, AppError> {
+    let api_url = session
+        .client
+        .session()
+        .map(|s| s.api_url.clone())
+        .unwrap_or_default();
+    let cache_key = format!("{api_url}#{contacts_account_id}");
+    let ttl = std::time::Duration::from_secs(crate::state::CONTACTS_CACHE_TTL_SECS);
+
+    if let Some(entry) = state.contacts_cache.get(&cache_key) {
+        if entry.fetched_at.elapsed() < ttl {
+            return Ok(entry.cards.clone());
+        }
+    }
+
+    let cards = session
+        .client
+        .get_contact_cards(contacts_account_id, Some(CONTACT_PROPERTIES))
+        .await?;
+    state.contacts_cache.insert(
+        cache_key,
+        crate::state::CachedContacts {
+            cards: cards.clone(),
+            fetched_at: std::time::Instant::now(),
+        },
+    );
+    Ok(cards)
+}
+
 async fn fetch_birthdays(
+    state: &AppState,
     session: &AuthedSession,
     params: &ViewParams,
 ) -> Result<Vec<jmap_client::jscontact::BirthdayOccurrence>, AppError> {
@@ -103,10 +147,7 @@ async fn fetch_birthdays(
         return Ok(Vec::new());
     };
     let (range_start, range_end) = view::display_range(params);
-    let cards = session
-        .client
-        .get_contact_cards(contacts_account_id)
-        .await?;
+    let cards = get_contact_cards_cached(state, session, contacts_account_id).await?;
     Ok(jmap_client::jscontact::expand_birthdays(
         &cards,
         range_start.date(),
@@ -178,7 +219,7 @@ async fn render_fragment(
 ) -> Result<String, AppError> {
     if params.view == ViewKind::Contacts {
         let cards = match &session.contacts_account_id {
-            Some(id) => session.client.get_contact_cards(id).await?,
+            Some(id) => get_contact_cards_cached(state, session, id).await?,
             None => Vec::new(),
         };
         let mut contacts: Vec<ContactRow> = cards
@@ -206,7 +247,7 @@ async fn render_fragment(
     }
 
     let events = fetch_events(session, state, params).await?;
-    let birthdays = fetch_birthdays(session, params).await?;
+    let birthdays = fetch_birthdays(state, session, params).await?;
     let inputs = view::BuildInputs {
         events: &events,
         calendars,

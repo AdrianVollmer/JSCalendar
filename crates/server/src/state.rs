@@ -1,6 +1,8 @@
 use std::sync::Arc;
+use std::time::Instant;
 
 use dashmap::DashMap;
+use jmap_client::jscontact::Card;
 use jmap_client::tz::Tz;
 use jmap_client::Client;
 
@@ -12,6 +14,20 @@ pub struct UserSession {
     /// `None` when the JMAP server doesn't advertise Contacts support —
     /// birthdays and the contacts list are simply hidden in that case.
     pub contacts_account_id: Option<String>,
+}
+
+/// How long a fetched contact list is trusted before re-fetching. There's
+/// no JMAP filter for "has a birthday in this range" — `ContactCard/get`
+/// always returns the whole address book — so the address book is cached
+/// rather than re-fetched on every render. Contact data changes rarely, so
+/// this trades a little staleness (an edit made from another client can
+/// take up to this long to show up here) for turning "every calendar view
+/// render" into "at most once per this interval."
+pub const CONTACTS_CACHE_TTL_SECS: u64 = 15 * 60;
+
+pub struct CachedContacts {
+    pub cards: Vec<Card>,
+    pub fetched_at: Instant,
 }
 
 /// Pre-fills the login form so a demo/test instance (e.g. wired up to
@@ -37,6 +53,10 @@ pub struct AppState {
     /// notion of the browser's zone without client-side JS.
     pub viewer_tz: Tz,
     pub demo_login: Option<DemoLogin>,
+    /// Keyed by `{api_url}#{account_id}` (not just account_id, since that's
+    /// only unique within one JMAP server) so two different accounts never
+    /// collide even if their ids happen to match.
+    pub contacts_cache: Arc<DashMap<String, CachedContacts>>,
 }
 
 impl AppState {
@@ -58,6 +78,7 @@ impl AppState {
             sessions: Arc::new(DashMap::new()),
             viewer_tz,
             demo_login,
+            contacts_cache: Arc::new(DashMap::new()),
         }
     }
 }

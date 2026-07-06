@@ -121,9 +121,14 @@ it manually instead.
 - Participants/attendees, alerts, and sharing (`Calendar/set` `shareWith`)
   are modeled in `jmap-client` but not surfaced in the UI yet.
 - Contacts are read-only: no create/edit/delete UI, and no address-book
-  management. `ContactCard/get` fetches every card on each request, since
-  there's no server-side filter for "has a birthday in this range" — fine
-  for a personal address book, but it won't scale to a very large one.
+  management. There's no JMAP filter for "has a birthday in this range", so
+  `ContactCard/get` always fetches the whole address book (requesting only
+  `uid`/`name`/`emails`/`anniversaries` via its `properties` argument, not
+  full cards) rather than fetching a slice of it; the result is cached per
+  account for `CONTACTS_CACHE_TTL_SECS` (15 minutes) so calendar views don't
+  re-fetch it on every render. Fine for a personal address book; a very
+  large one would want incremental sync via `ContactCard/changes` instead
+  of a blind TTL.
 
 ## Development
 

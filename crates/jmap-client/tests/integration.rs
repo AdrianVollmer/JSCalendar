@@ -287,7 +287,7 @@ async fn contacts_account_resolves_and_cards_parse_with_birthday() {
         .mount(&server)
         .await;
 
-    let cards = client.get_contact_cards("a1").await.unwrap();
+    let cards = client.get_contact_cards("a1", None).await.unwrap();
     assert_eq!(cards.len(), 1);
     assert_eq!(cards[0].display_name(), "Ada Lovelace");
 

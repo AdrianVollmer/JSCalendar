@@ -254,10 +254,16 @@ fn dispatch(db: &mut Db, name: &str, args: &Value) -> (String, Value) {
             query_events_response(&account_id, &db.events, args),
         ),
         "AddressBook/get" => (name.into(), get_response(&account_id, &db.address_books)),
-        "ContactCard/get" => (
-            name.into(),
-            get_by_ids_response(&account_id, &db.cards, args),
-        ),
+        "ContactCard/get" => {
+            tracing::info!(
+                "ContactCard/get requested (properties: {:?})",
+                args.get("properties")
+            );
+            (
+                name.into(),
+                get_by_ids_response(&account_id, &db.cards, args),
+            )
+        }
         other => (
             "error".into(),
             json!({ "type": "unknownMethod", "description": format!("mock server does not implement {other}") }),
