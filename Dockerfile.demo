@@ -1,0 +1,37 @@
+# syntax=docker/dockerfile:1
+#
+# A self-contained demo/test image: bundles the real app server together
+# with the in-memory mock JMAP server and seed data, so it runs with zero
+# external setup. Not meant for production use — see Dockerfile for that.
+
+FROM rust:1-bookworm AS builder
+WORKDIR /build
+COPY Cargo.toml Cargo.lock ./
+COPY crates/jmap-client crates/jmap-client
+COPY crates/server crates/server
+COPY crates/mock-jmap-server crates/mock-jmap-server
+RUN cargo build --release --locked -p jscalendar-server -p mock-jmap-server
+
+FROM debian:bookworm-slim AS runtime
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --system --create-home --uid 10001 jscalendar
+
+WORKDIR /app
+COPY --from=builder /build/target/release/jscalendar-server /app/jscalendar-server
+COPY --from=builder /build/target/release/mock-jmap-server /app/mock-jmap-server
+COPY crates/server/static /app/static
+COPY docker-demo-entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+ENV JSCAL_STATIC_DIR=/app/static \
+    PORT=8787 \
+    JSCAL_TIMEZONE=UTC \
+    JSCAL_DEMO_SERVER_URL=http://127.0.0.1:9090 \
+    JSCAL_DEMO_USERNAME=demo \
+    JSCAL_DEMO_PASSWORD=demo
+EXPOSE 8787
+USER jscalendar
+
+ENTRYPOINT ["/app/entrypoint.sh"]

@@ -20,6 +20,7 @@ struct LoginTemplate {
     error: Option<String>,
     server_url: String,
     username: String,
+    password: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -27,11 +28,13 @@ pub struct LoginQuery {
     error: Option<String>,
 }
 
-pub async fn login_form(Query(q): Query<LoginQuery>) -> Response {
+pub async fn login_form(State(state): State<AppState>, Query(q): Query<LoginQuery>) -> Response {
+    let demo = state.demo_login.clone();
     render(&LoginTemplate {
         error: q.error,
-        server_url: String::new(),
-        username: String::new(),
+        server_url: demo.as_ref().map(|d| d.server_url.clone()).unwrap_or_default(),
+        username: demo.as_ref().map(|d| d.username.clone()).unwrap_or_default(),
+        password: demo.map(|d| d.password).unwrap_or_default(),
     })
 }
 

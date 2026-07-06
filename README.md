@@ -42,10 +42,38 @@ Environment variables:
 | `PORT`              | `8787`                            | HTTP port to listen on                                               |
 | `JSCAL_TIMEZONE`    | `UTC`                             | IANA zone views are rendered in (e.g. `Europe/Berlin`)               |
 | `JSCAL_STATIC_DIR`  | `crates/server/static`            | Where to serve `/static/*` and `/sw.js` from                         |
+| `JSCAL_DEMO_SERVER_URL` | unset                         | If set, pre-fills the login form's server URL (see below)            |
+| `JSCAL_DEMO_USERNAME`   | `demo`                        | Pre-filled username, only used when `JSCAL_DEMO_SERVER_URL` is set   |
+| `JSCAL_DEMO_PASSWORD`   | `demo`                        | Pre-filled password, only used when `JSCAL_DEMO_SERVER_URL` is set   |
 
 Then open `http://localhost:8787`, sign in with your JMAP server's URL (or
 just its hostname — `/.well-known/jmap` is appended automatically),
 username/password, or an API token.
+
+## Trying it without a JMAP account
+
+`crates/mock-jmap-server` is a small in-memory JMAP server — calendars,
+recurring events, and contacts with birthdays, seeded relative to today so
+it always looks current — that accepts any credentials. It's a real
+implementation of the wire protocol (session discovery, `Calendar`/
+`CalendarEvent`/`AddressBook`/`ContactCard`, the `CalendarEvent/query`
+result-reference chaining), not a UI fake, so it exercises the same
+`jmap-client` code path a real server would.
+
+```sh
+make demo          # runs the app + mock server together, login pre-filled
+```
+
+or, fully containerized (no Rust toolchain needed):
+
+```sh
+make docker-demo-build
+make docker-demo-run   # http://localhost:8787, login pre-filled
+```
+
+`make mock-server` runs just the mock server on its own (default
+`:9090`) if you want to point a normal `cargo run -p jscalendar-server` at
+it manually instead.
 
 ## What's implemented
 
