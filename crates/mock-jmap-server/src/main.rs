@@ -75,9 +75,15 @@ fn seed() -> Db {
         }),
     ];
 
-    let address_books = vec![json!({ "id": "ab1", "name": "Contacts", "sortOrder": 0, "isSubscribed": true })];
+    let address_books =
+        vec![json!({ "id": "ab1", "name": "Contacts", "sortOrder": 0, "isSubscribed": true })];
 
-    let this_year = now.date_naive().format("%Y").to_string().parse::<i32>().unwrap_or(2026);
+    let this_year = now
+        .date_naive()
+        .format("%Y")
+        .to_string()
+        .parse::<i32>()
+        .unwrap_or(2026);
     let cards = vec![
         json!({
             "@type": "Card", "version": "1.0", "id": "card1", "uid": "card1-uid",
@@ -117,7 +123,8 @@ use chrono::Datelike;
 async fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "mock_jmap_server=info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "mock_jmap_server=info".into()),
         )
         .init();
 
@@ -128,7 +135,10 @@ async fn main() {
         .route("/api", post(api))
         .with_state(state);
 
-    let port: u16 = std::env::var("PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(9090);
+    let port: u16 = std::env::var("PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(9090);
     let bind_addr = std::env::var("BIND_ADDR").unwrap_or_else(|_| "0.0.0.0".to_string());
     let listener = tokio::net::TcpListener::bind((bind_addr.as_str(), port))
         .await
@@ -197,7 +207,9 @@ async fn api(State(state): State<AppState>, Json(req): Json<JmapRequest>) -> Res
 /// paths like `/ids` are needed here) plucked from an earlier response in
 /// the same request.
 fn resolve_result_refs(args: &mut Value, prior: &[(String, Value, String)]) {
-    let Some(obj) = args.as_object_mut() else { return };
+    let Some(obj) = args.as_object_mut() else {
+        return;
+    };
     let ref_keys: Vec<String> = obj.keys().filter(|k| k.starts_with('#')).cloned().collect();
     for key in ref_keys {
         if let Some(reference) = obj.get(&key).cloned() {
@@ -218,15 +230,34 @@ fn resolve_result_refs(args: &mut Value, prior: &[(String, Value, String)]) {
 }
 
 fn dispatch(db: &mut Db, name: &str, args: &Value) -> (String, Value) {
-    let account_id = args.get("accountId").and_then(|v| v.as_str()).unwrap_or("acc1").to_string();
+    let account_id = args
+        .get("accountId")
+        .and_then(|v| v.as_str())
+        .unwrap_or("acc1")
+        .to_string();
     match name {
         "Calendar/get" => (name.into(), get_response(&account_id, &db.calendars)),
-        "Calendar/set" => (name.into(), set_response(&account_id, &mut db.calendars, &mut db.next_id, args, "cal")),
-        "CalendarEvent/get" => (name.into(), get_by_ids_response(&account_id, &db.events, args)),
-        "CalendarEvent/set" => (name.into(), set_response(&account_id, &mut db.events, &mut db.next_id, args, "evt")),
-        "CalendarEvent/query" => (name.into(), query_events_response(&account_id, &db.events, args)),
+        "Calendar/set" => (
+            name.into(),
+            set_response(&account_id, &mut db.calendars, &mut db.next_id, args, "cal"),
+        ),
+        "CalendarEvent/get" => (
+            name.into(),
+            get_by_ids_response(&account_id, &db.events, args),
+        ),
+        "CalendarEvent/set" => (
+            name.into(),
+            set_response(&account_id, &mut db.events, &mut db.next_id, args, "evt"),
+        ),
+        "CalendarEvent/query" => (
+            name.into(),
+            query_events_response(&account_id, &db.events, args),
+        ),
         "AddressBook/get" => (name.into(), get_response(&account_id, &db.address_books)),
-        "ContactCard/get" => (name.into(), get_by_ids_response(&account_id, &db.cards, args)),
+        "ContactCard/get" => (
+            name.into(),
+            get_by_ids_response(&account_id, &db.cards, args),
+        ),
         other => (
             "error".into(),
             json!({ "type": "unknownMethod", "description": format!("mock server does not implement {other}") }),
@@ -245,7 +276,12 @@ fn get_by_ids_response(account_id: &str, list: &[Value], args: &Value) -> Value 
         Some(ids) => {
             let wanted: Vec<&str> = ids.iter().filter_map(|v| v.as_str()).collect();
             list.iter()
-                .filter(|item| item.get("id").and_then(|v| v.as_str()).map(|id| wanted.contains(&id)).unwrap_or(false))
+                .filter(|item| {
+                    item.get("id")
+                        .and_then(|v| v.as_str())
+                        .map(|id| wanted.contains(&id))
+                        .unwrap_or(false)
+                })
                 .cloned()
                 .collect()
         }
@@ -253,7 +289,13 @@ fn get_by_ids_response(account_id: &str, list: &[Value], args: &Value) -> Value 
     json!({ "accountId": account_id, "state": "s1", "list": filtered, "notFound": [] })
 }
 
-fn set_response(account_id: &str, list: &mut Vec<Value>, next_id: &mut u64, args: &Value, id_prefix: &str) -> Value {
+fn set_response(
+    account_id: &str,
+    list: &mut Vec<Value>,
+    next_id: &mut u64,
+    args: &Value,
+    id_prefix: &str,
+) -> Value {
     let mut created = serde_json::Map::new();
     let mut updated = serde_json::Map::new();
     let mut destroyed: Vec<Value> = Vec::new();
@@ -272,8 +314,13 @@ fn set_response(account_id: &str, list: &mut Vec<Value>, next_id: &mut u64, args
     }
     if let Some(update) = args.get("update").and_then(|v| v.as_object()) {
         for (item_id, patch) in update {
-            if let Some(existing) = list.iter_mut().find(|item| item.get("id").and_then(|v| v.as_str()) == Some(item_id.as_str())) {
-                if let (Some(existing_map), Some(patch_map)) = (existing.as_object_mut(), patch.as_object()) {
+            if let Some(existing) = list
+                .iter_mut()
+                .find(|item| item.get("id").and_then(|v| v.as_str()) == Some(item_id.as_str()))
+            {
+                if let (Some(existing_map), Some(patch_map)) =
+                    (existing.as_object_mut(), patch.as_object())
+                {
                     for (k, v) in patch_map {
                         existing_map.insert(k.clone(), v.clone());
                     }
@@ -284,7 +331,12 @@ fn set_response(account_id: &str, list: &mut Vec<Value>, next_id: &mut u64, args
     }
     if let Some(destroy) = args.get("destroy").and_then(|v| v.as_array()) {
         let ids: Vec<&str> = destroy.iter().filter_map(|v| v.as_str()).collect();
-        list.retain(|item| item.get("id").and_then(|v| v.as_str()).map(|id| !ids.contains(&id)).unwrap_or(true));
+        list.retain(|item| {
+            item.get("id")
+                .and_then(|v| v.as_str())
+                .map(|id| !ids.contains(&id))
+                .unwrap_or(true)
+        });
         destroyed = destroy.clone();
     }
 
@@ -305,9 +357,13 @@ fn set_response(account_id: &str, list: &mut Vec<Value>, next_id: &mut u64, args
 fn query_events_response(account_id: &str, events: &[Value], args: &Value) -> Value {
     let filter = args.get("filter");
     let after = filter.and_then(|f| f.get("after")).and_then(|v| v.as_str());
-    let before = filter.and_then(|f| f.get("before")).and_then(|v| v.as_str());
-    let in_calendars: Option<Vec<&str>> =
-        filter.and_then(|f| f.get("inCalendars")).and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|v| v.as_str()).collect());
+    let before = filter
+        .and_then(|f| f.get("before"))
+        .and_then(|v| v.as_str());
+    let in_calendars: Option<Vec<&str>> = filter
+        .and_then(|f| f.get("inCalendars"))
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect());
 
     let matches = |ev: &Value| -> bool {
         if let Some(cals) = &in_calendars {
@@ -323,13 +379,23 @@ fn query_events_response(account_id: &str, events: &[Value], args: &Value) -> Va
         if ev.get("recurrenceRules").is_some() {
             return true;
         }
-        let Some(start) = ev.get("start").and_then(|v| v.as_str()) else { return false };
-        let matches_before = before.map(|b| start < b.trim_end_matches('Z')).unwrap_or(true);
-        let matches_after = after.map(|a| start >= &a[..a.len().min(19)]).unwrap_or(true);
+        let Some(start) = ev.get("start").and_then(|v| v.as_str()) else {
+            return false;
+        };
+        let matches_before = before
+            .map(|b| start < b.trim_end_matches('Z'))
+            .unwrap_or(true);
+        let matches_after = after
+            .map(|a| start >= &a[..a.len().min(19)])
+            .unwrap_or(true);
         matches_before && matches_after
     };
 
-    let ids: Vec<Value> = events.iter().filter(|e| matches(e)).filter_map(|e| e.get("id").cloned()).collect();
+    let ids: Vec<Value> = events
+        .iter()
+        .filter(|e| matches(e))
+        .filter_map(|e| e.get("id").cloned())
+        .collect();
     let total = ids.len();
     json!({
         "accountId": account_id,

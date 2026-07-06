@@ -46,14 +46,20 @@ mod tests {
         let converted = convert(naive, Some(berlin), ny);
         assert_eq!(
             converted,
-            NaiveDate::from_ymd_opt(2026, 7, 15).unwrap().and_hms_opt(12, 0, 0).unwrap()
+            NaiveDate::from_ymd_opt(2026, 7, 15)
+                .unwrap()
+                .and_hms_opt(12, 0, 0)
+                .unwrap()
         );
     }
 
     #[test]
     fn floating_time_is_unchanged() {
         let ny: Tz = "America/New_York".parse().unwrap();
-        let naive = NaiveDate::from_ymd_opt(2026, 7, 15).unwrap().and_hms_opt(9, 0, 0).unwrap();
+        let naive = NaiveDate::from_ymd_opt(2026, 7, 15)
+            .unwrap()
+            .and_hms_opt(9, 0, 0)
+            .unwrap();
         assert_eq!(convert(naive, None, ny), naive);
     }
 }

@@ -39,7 +39,10 @@ async fn main() {
             get(routes::event_edit_form).post(routes::event_update),
         )
         .route("/app/event/{id}/delete", post(routes::event_delete))
-        .route("/app/event/{id}", patch(routes::event_update).delete(routes::event_delete))
+        .route(
+            "/app/event/{id}",
+            patch(routes::event_update).delete(routes::event_delete),
+        )
         // Served at the root so its default scope covers the whole origin.
         .route_service("/sw.js", ServeFile::new(static_dir.join("sw.js")))
         .nest_service("/static", ServeDir::new(&static_dir))
@@ -47,11 +50,17 @@ async fn main() {
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
-    let port: u16 = std::env::var("PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(8787);
+    let port: u16 = std::env::var("PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(8787);
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", port))
         .await
         .expect("failed to bind listener");
-    tracing::info!("serving on http://0.0.0.0:{port} (static: {})", static_dir.display());
+    tracing::info!(
+        "serving on http://0.0.0.0:{port} (static: {})",
+        static_dir.display()
+    );
     axum::serve(listener, app).await.expect("server error");
 }
 

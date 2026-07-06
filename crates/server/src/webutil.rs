@@ -24,6 +24,10 @@ pub fn redirect(target: &str, headers: &HeaderMap) -> Response {
 pub fn render<T: Template>(tpl: &T) -> Response {
     match tpl.render() {
         Ok(body) => Html(body).into_response(),
-        Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, format!("template error: {err}")).into_response(),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("template error: {err}"),
+        )
+            .into_response(),
     }
 }

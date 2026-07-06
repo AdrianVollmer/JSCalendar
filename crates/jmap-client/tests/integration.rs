@@ -41,7 +41,9 @@ async fn session_mock(server: &MockServer) {
 async fn connected_client(server: &MockServer) -> Client {
     session_mock(server).await;
     let mut client = Client::new(
-        format!("{}/.well-known/jmap", server.uri()).parse().unwrap(),
+        format!("{}/.well-known/jmap", server.uri())
+            .parse()
+            .unwrap(),
         Credentials::Basic {
             username: "user@example.com".into(),
             password: "hunter2".into(),
@@ -68,7 +70,9 @@ async fn unauthorized_session_maps_to_error() {
         .mount(&server)
         .await;
     let mut client = Client::new(
-        format!("{}/.well-known/jmap", server.uri()).parse().unwrap(),
+        format!("{}/.well-known/jmap", server.uri())
+            .parse()
+            .unwrap(),
         Credentials::Basic {
             username: "u".into(),
             password: "wrong".into(),
@@ -164,13 +168,22 @@ async fn query_events_chains_query_and_get() {
         .await;
 
     let events = client
-        .query_events("a1", Some("cal1"), Some("2026-07-01T00:00:00"), Some("2026-08-01T00:00:00"))
+        .query_events(
+            "a1",
+            Some("cal1"),
+            Some("2026-07-01T00:00:00"),
+            Some("2026-08-01T00:00:00"),
+        )
         .await
         .unwrap();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].title.as_deref(), Some("Standup"));
     assert_eq!(events[0].duration, "PT30M");
-    assert!(events[0].calendar_ids.as_ref().unwrap().contains_key("cal1"));
+    assert!(events[0]
+        .calendar_ids
+        .as_ref()
+        .unwrap()
+        .contains_key("cal1"));
 }
 
 #[tokio::test]

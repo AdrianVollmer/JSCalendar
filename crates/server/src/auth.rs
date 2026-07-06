@@ -32,8 +32,14 @@ pub async fn login_form(State(state): State<AppState>, Query(q): Query<LoginQuer
     let demo = state.demo_login.clone();
     render(&LoginTemplate {
         error: q.error,
-        server_url: demo.as_ref().map(|d| d.server_url.clone()).unwrap_or_default(),
-        username: demo.as_ref().map(|d| d.username.clone()).unwrap_or_default(),
+        server_url: demo
+            .as_ref()
+            .map(|d| d.server_url.clone())
+            .unwrap_or_default(),
+        username: demo
+            .as_ref()
+            .map(|d| d.username.clone())
+            .unwrap_or_default(),
         password: demo.map(|d| d.password).unwrap_or_default(),
     })
 }
@@ -76,7 +82,9 @@ pub async fn login(
             let jar = jar.add(cookie);
             (jar, Redirect::to("/app")).into_response()
         }
-        Err(msg) => Redirect::to(&format!("/login?error={}", urlencoding_light(&msg))).into_response(),
+        Err(msg) => {
+            Redirect::to(&format!("/login?error={}", urlencoding_light(&msg))).into_response()
+        }
     }
 }
 
@@ -166,7 +174,10 @@ where
         let app_state = AppState::from_ref(state);
         let reject = || redirect_to_login(&parts.headers);
         let jar = CookieJar::from_headers(&parts.headers);
-        let sid = jar.get(COOKIE_NAME).map(|c| c.value().to_string()).ok_or_else(reject)?;
+        let sid = jar
+            .get(COOKIE_NAME)
+            .map(|c| c.value().to_string())
+            .ok_or_else(reject)?;
         let session = app_state.sessions.get(&sid).ok_or_else(reject)?;
         Ok(AuthedSession {
             client: session.client.clone(),

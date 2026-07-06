@@ -33,7 +33,9 @@ impl IntoResponse for AppError {
             status: self.status.as_u16(),
             message: self.message,
         };
-        let body = tpl.render().unwrap_or_else(|e| format!("template error: {e}"));
+        let body = tpl
+            .render()
+            .unwrap_or_else(|e| format!("template error: {e}"));
         (self.status, axum::response::Html(body)).into_response()
     }
 }
@@ -44,9 +46,9 @@ impl From<jmap_client::Error> for AppError {
             jmap_client::Error::Unauthorized => StatusCode::UNAUTHORIZED,
             jmap_client::Error::NotFound => StatusCode::NOT_FOUND,
             jmap_client::Error::UnsupportedAccount(_) => StatusCode::BAD_GATEWAY,
-            jmap_client::Error::Http(_) | jmap_client::Error::Json(_) | jmap_client::Error::Protocol(_) => {
-                StatusCode::BAD_GATEWAY
-            }
+            jmap_client::Error::Http(_)
+            | jmap_client::Error::Json(_)
+            | jmap_client::Error::Protocol(_) => StatusCode::BAD_GATEWAY,
         };
         AppError::new(status, err.to_string())
     }

@@ -45,11 +45,15 @@ impl AppState {
             .ok()
             .and_then(|s| jmap_client::tz::parse_tz(&s))
             .unwrap_or(Tz::UTC);
-        let demo_login = std::env::var("JSCAL_DEMO_SERVER_URL").ok().map(|server_url| DemoLogin {
-            server_url,
-            username: std::env::var("JSCAL_DEMO_USERNAME").unwrap_or_else(|_| "demo".to_string()),
-            password: std::env::var("JSCAL_DEMO_PASSWORD").unwrap_or_else(|_| "demo".to_string()),
-        });
+        let demo_login = std::env::var("JSCAL_DEMO_SERVER_URL")
+            .ok()
+            .map(|server_url| DemoLogin {
+                server_url,
+                username: std::env::var("JSCAL_DEMO_USERNAME")
+                    .unwrap_or_else(|_| "demo".to_string()),
+                password: std::env::var("JSCAL_DEMO_PASSWORD")
+                    .unwrap_or_else(|_| "demo".to_string()),
+            });
         Self {
             sessions: Arc::new(DashMap::new()),
             viewer_tz,

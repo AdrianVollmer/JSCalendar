@@ -208,7 +208,11 @@ fn daily_dates(start: NaiveDate, interval: i32) -> impl Iterator<Item = NaiveDat
     (0i64..).map(move |n| start + chrono::Duration::days(n * interval as i64))
 }
 
-fn weekly_dates(start: NaiveDate, interval: i32, by_day: &[NDay]) -> impl Iterator<Item = NaiveDate> {
+fn weekly_dates(
+    start: NaiveDate,
+    interval: i32,
+    by_day: &[NDay],
+) -> impl Iterator<Item = NaiveDate> {
     let days: Vec<Weekday> = if by_day.is_empty() {
         vec![start.weekday()]
     } else {
@@ -235,33 +239,43 @@ fn monthly_dates(
     let by_day = by_day.to_vec();
     let by_month_day = by_month_day.to_vec();
     let start_day = start.day();
-    (0u32..).filter_map(move |n| {
-        let month_date = start.checked_add_months(Months::new(n * interval as u32))?;
-        let year = month_date.year();
-        let month = month_date.month();
-        if !by_day.is_empty() {
-            // Only single-nth-per-rule is supported; if multiple entries
-            // are given, emit all of them for that month.
-            return None.or_else(|| {
-                let dates: Vec<NaiveDate> = by_day
+    (0u32..)
+        .filter_map(move |n| {
+            let month_date = start.checked_add_months(Months::new(n * interval as u32))?;
+            let year = month_date.year();
+            let month = month_date.month();
+            if !by_day.is_empty() {
+                // Only single-nth-per-rule is supported; if multiple entries
+                // are given, emit all of them for that month.
+                return None.or_else(|| {
+                    let dates: Vec<NaiveDate> = by_day
+                        .iter()
+                        .filter_map(|nd| {
+                            nth_weekday_of_month(
+                                year,
+                                month,
+                                to_chrono_weekday(nd.day),
+                                nd.nth_of_period.unwrap_or(1),
+                            )
+                        })
+                        .collect();
+                    Some(dates)
+                });
+            }
+            if !by_month_day.is_empty() {
+                let dates: Vec<NaiveDate> = by_month_day
                     .iter()
-                    .filter_map(|nd| {
-                        nth_weekday_of_month(year, month, to_chrono_weekday(nd.day), nd.nth_of_period.unwrap_or(1))
-                    })
+                    .filter_map(|&d| nth_day_of_month(year, month, d))
                     .collect();
-                Some(dates)
-            });
-        }
-        if !by_month_day.is_empty() {
-            let dates: Vec<NaiveDate> = by_month_day
-                .iter()
-                .filter_map(|&d| nth_day_of_month(year, month, d))
-                .collect();
-            return Some(dates);
-        }
-        Some(NaiveDate::from_ymd_opt(year, month, start_day).into_iter().collect())
-    })
-    .flat_map(|v| v.into_iter())
+                return Some(dates);
+            }
+            Some(
+                NaiveDate::from_ymd_opt(year, month, start_day)
+                    .into_iter()
+                    .collect(),
+            )
+        })
+        .flat_map(|v| v.into_iter())
 }
 
 fn yearly_dates(
@@ -281,15 +295,21 @@ fn yearly_dates(
         let months: Vec<u32> = if by_month.is_empty() {
             vec![start_month]
         } else {
-            by_month.iter().filter_map(|m| m.parse::<u32>().ok()).collect()
+            by_month
+                .iter()
+                .filter_map(|m| m.parse::<u32>().ok())
+                .collect()
         };
         let mut dates = Vec::new();
         for month in months {
             if !by_day.is_empty() {
                 for nd in &by_day {
-                    if let Some(d) =
-                        nth_weekday_of_month(year, month, to_chrono_weekday(nd.day), nd.nth_of_period.unwrap_or(1))
-                    {
+                    if let Some(d) = nth_weekday_of_month(
+                        year,
+                        month,
+                        to_chrono_weekday(nd.day),
+                        nd.nth_of_period.unwrap_or(1),
+                    ) {
                         dates.push(d);
                     }
                 }
@@ -325,7 +345,9 @@ fn nth_day_of_month(year: i32, month: u32, day: i32) -> Option<NaiveDate> {
 fn nth_weekday_of_month(year: i32, month: u32, weekday: Weekday, nth: i32) -> Option<NaiveDate> {
     if nth > 0 {
         let first = NaiveDate::from_ymd_opt(year, month, 1)?;
-        let offset = (7 + weekday.num_days_from_monday() as i64 - first.weekday().num_days_from_monday() as i64) % 7;
+        let offset = (7 + weekday.num_days_from_monday() as i64
+            - first.weekday().num_days_from_monday() as i64)
+            % 7;
         let candidate = first + chrono::Duration::days(offset + 7 * (nth as i64 - 1));
         if candidate.month() == month {
             Some(candidate)
@@ -339,7 +361,9 @@ fn nth_weekday_of_month(year: i32, month: u32, weekday: Weekday, nth: i32) -> Op
             NaiveDate::from_ymd_opt(year, month + 1, 1)?
         };
         let last = first_next.pred_opt()?;
-        let offset = (7 + last.weekday().num_days_from_monday() as i64 - weekday.num_days_from_monday() as i64) % 7;
+        let offset = (7 + last.weekday().num_days_from_monday() as i64
+            - weekday.num_days_from_monday() as i64)
+            % 7;
         let candidate = last - chrono::Duration::days(offset + 7 * (-nth as i64 - 1));
         if candidate.month() == month {
             Some(candidate)
@@ -381,7 +405,8 @@ mod tests {
 
     #[test]
     fn daily_interval_two_with_count() {
-        let mut event = CalendarEvent::new("u1", LocalDateTime::from_naive(dt("2026-07-01T09:00:00")));
+        let mut event =
+            CalendarEvent::new("u1", LocalDateTime::from_naive(dt("2026-07-01T09:00:00")));
         event.recurrence_rules = Some(vec![RecurrenceRule {
             frequency: Frequency::Daily,
             interval: Some(2),
@@ -406,13 +431,26 @@ mod tests {
     fn weekly_by_day() {
         use crate::jscalendar::Weekday as J;
         // 2026-07-06 is a Monday.
-        let mut event = CalendarEvent::new("u1", LocalDateTime::from_naive(dt("2026-07-06T10:00:00")));
+        let mut event =
+            CalendarEvent::new("u1", LocalDateTime::from_naive(dt("2026-07-06T10:00:00")));
         event.recurrence_rules = Some(vec![RecurrenceRule {
             frequency: Frequency::Weekly,
             by_day: vec![
-                NDay { type_: "NDay".into(), day: J::Monday, nth_of_period: None },
-                NDay { type_: "NDay".into(), day: J::Wednesday, nth_of_period: None },
-                NDay { type_: "NDay".into(), day: J::Friday, nth_of_period: None },
+                NDay {
+                    type_: "NDay".into(),
+                    day: J::Monday,
+                    nth_of_period: None,
+                },
+                NDay {
+                    type_: "NDay".into(),
+                    day: J::Wednesday,
+                    nth_of_period: None,
+                },
+                NDay {
+                    type_: "NDay".into(),
+                    day: J::Friday,
+                    nth_of_period: None,
+                },
             ],
             ..Default::default()
         }]);
@@ -427,10 +465,15 @@ mod tests {
     fn monthly_nth_weekday() {
         use crate::jscalendar::Weekday as J;
         // 2nd Tuesday of each month, starting 2026-01-13 (which is the 2nd Tuesday of Jan 2026).
-        let mut event = CalendarEvent::new("u1", LocalDateTime::from_naive(dt("2026-01-13T14:00:00")));
+        let mut event =
+            CalendarEvent::new("u1", LocalDateTime::from_naive(dt("2026-01-13T14:00:00")));
         event.recurrence_rules = Some(vec![RecurrenceRule {
             frequency: Frequency::Monthly,
-            by_day: vec![NDay { type_: "NDay".into(), day: J::Tuesday, nth_of_period: Some(2) }],
+            by_day: vec![NDay {
+                type_: "NDay".into(),
+                day: J::Tuesday,
+                nth_of_period: Some(2),
+            }],
             count: Some(3),
             ..Default::default()
         }]);
@@ -448,7 +491,8 @@ mod tests {
 
     #[test]
     fn recurrence_override_excludes_and_reschedules() {
-        let mut event = CalendarEvent::new("u1", LocalDateTime::from_naive(dt("2026-07-06T09:00:00")));
+        let mut event =
+            CalendarEvent::new("u1", LocalDateTime::from_naive(dt("2026-07-06T09:00:00")));
         event.recurrence_rules = Some(vec![RecurrenceRule {
             frequency: Frequency::Daily,
             count: Some(3),
@@ -457,11 +501,18 @@ mod tests {
         let mut overrides = std::collections::BTreeMap::new();
         overrides.insert(
             LocalDateTime("2026-07-07T09:00:00".into()),
-            [("excluded".to_string(), serde_json::json!(true))].into_iter().collect(),
+            [("excluded".to_string(), serde_json::json!(true))]
+                .into_iter()
+                .collect(),
         );
         overrides.insert(
             LocalDateTime("2026-07-08T09:00:00".into()),
-            [("start".to_string(), serde_json::json!("2026-07-08T15:00:00"))].into_iter().collect(),
+            [(
+                "start".to_string(),
+                serde_json::json!("2026-07-08T15:00:00"),
+            )]
+            .into_iter()
+            .collect(),
         );
         event.recurrence_overrides = Some(overrides);
 

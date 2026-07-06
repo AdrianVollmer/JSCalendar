@@ -13,7 +13,11 @@ pub fn parse_duration(s: &str) -> Option<Duration> {
     };
 
     let mut total = Duration::zero();
-    total += parse_component_group(date_part, &[('Y', 365), ('M', 30), ('W', 7), ('D', 1)], true)?;
+    total += parse_component_group(
+        date_part,
+        &[('Y', 365), ('M', 30), ('W', 7), ('D', 1)],
+        true,
+    )?;
     if let Some(t) = time_part {
         total += parse_component_group(t, &[('H', 0), ('M', 0), ('S', 0)], false)?;
     }

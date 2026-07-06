@@ -89,9 +89,7 @@ impl AnniversaryDate {
                 let d: u32 = date.get(8..10)?.parse().ok()?;
                 Some((m, d, Some(y)))
             }
-            AnniversaryDate::PartialDate { year, month, day } => {
-                Some(((*month)?, (*day)?, *year))
-            }
+            AnniversaryDate::PartialDate { year, month, day } => Some(((*month)?, (*day)?, *year)),
         }
     }
 }
@@ -151,7 +149,11 @@ impl Card {
     }
 
     pub fn primary_email(&self) -> Option<&str> {
-        self.emails.as_ref()?.values().next().map(|e| e.address.as_str())
+        self.emails
+            .as_ref()?
+            .values()
+            .next()
+            .map(|e| e.address.as_str())
     }
 }
 
@@ -224,7 +226,11 @@ pub struct BirthdayOccurrence {
 
 /// Expand every card's birthday anniversaries into concrete occurrences
 /// intersecting `[range_start, range_end)`, recurring annually.
-pub fn expand_birthdays(cards: &[Card], range_start: NaiveDate, range_end: NaiveDate) -> Vec<BirthdayOccurrence> {
+pub fn expand_birthdays(
+    cards: &[Card],
+    range_start: NaiveDate,
+    range_end: NaiveDate,
+) -> Vec<BirthdayOccurrence> {
     let mut out = Vec::new();
     for card in cards {
         for bday in birthdays_from_card(card) {
@@ -319,7 +325,12 @@ mod tests {
             month: Some(6),
             day: Some(1),
         });
-        card.anniversaries.as_mut().unwrap().get_mut("a1").unwrap().kind = Some("wedding".to_string());
+        card.anniversaries
+            .as_mut()
+            .unwrap()
+            .get_mut("a1")
+            .unwrap()
+            .kind = Some("wedding".to_string());
         let occs = expand_birthdays(
             &[card],
             NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),

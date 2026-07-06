@@ -148,9 +148,19 @@ impl ViewParams {
                 let start = week_start(self.date);
                 let end = start + ChronoDuration::days(6);
                 if start.month() == end.month() {
-                    format!("{} {}\u{2013}{} {}", start.format("%b"), start.day(), end.day(), end.year())
+                    format!(
+                        "{} {}\u{2013}{} {}",
+                        start.format("%b"),
+                        start.day(),
+                        end.day(),
+                        end.year()
+                    )
                 } else {
-                    format!("{} \u{2013} {}", start.format("%b %-d"), end.format("%b %-d, %Y"))
+                    format!(
+                        "{} \u{2013} {}",
+                        start.format("%b %-d"),
+                        end.format("%b %-d, %Y")
+                    )
                 }
             }
             ViewKind::Day => {
@@ -179,22 +189,31 @@ pub fn display_range(params: &ViewParams) -> (NaiveDateTime, NaiveDateTime) {
             if grid_end < next_month {
                 grid_end += ChronoDuration::days(7);
             }
-            (grid_start.and_hms_opt(0, 0, 0).unwrap(), grid_end.and_hms_opt(0, 0, 0).unwrap())
+            (
+                grid_start.and_hms_opt(0, 0, 0).unwrap(),
+                grid_end.and_hms_opt(0, 0, 0).unwrap(),
+            )
         }
         ViewKind::Week => {
             let start = week_start(params.date);
             (
                 start.and_hms_opt(0, 0, 0).unwrap(),
-                (start + ChronoDuration::days(7)).and_hms_opt(0, 0, 0).unwrap(),
+                (start + ChronoDuration::days(7))
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap(),
             )
         }
         ViewKind::Day => (
             params.date.and_hms_opt(0, 0, 0).unwrap(),
-            (params.date + ChronoDuration::days(1)).and_hms_opt(0, 0, 0).unwrap(),
+            (params.date + ChronoDuration::days(1))
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
         ),
         ViewKind::Agenda => (
             params.date.and_hms_opt(0, 0, 0).unwrap(),
-            (params.date + ChronoDuration::days(30)).and_hms_opt(0, 0, 0).unwrap(),
+            (params.date + ChronoDuration::days(30))
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
         ),
         // Not date-anchored; callers skip fetching events for this view.
         ViewKind::Contacts => (
@@ -360,18 +379,29 @@ pub fn localize_events(
 }
 
 fn time_label(start: NaiveDateTime, end: NaiveDateTime) -> String {
-    format!("{}\u{2013}{}", start.format("%-I:%M %p"), end.format("%-I:%M %p"))
+    format!(
+        "{}\u{2013}{}",
+        start.format("%-I:%M %p"),
+        end.format("%-I:%M %p")
+    )
 }
 
 fn to_event_view(l: &Localized, calendars: &[Calendar]) -> EventView {
-    let calendar = calendars.iter().find(|c| c.id.as_deref() == Some(l.calendar_id.as_str()));
+    let calendar = calendars
+        .iter()
+        .find(|c| c.id.as_deref() == Some(l.calendar_id.as_str()));
     let id = l.event.id.clone().unwrap_or_default();
     let day_start = l.start.date().and_hms_opt(0, 0, 0).unwrap();
     let minutes_from_midnight = (l.start - day_start).num_minutes().max(0) as f64;
     let duration_minutes = (l.end - l.start).num_minutes().max(15) as f64;
     EventView {
         id: id.clone(),
-        title: l.event.title.clone().filter(|t| !t.is_empty()).unwrap_or_else(|| "(untitled)".to_string()),
+        title: l
+            .event
+            .title
+            .clone()
+            .filter(|t| !t.is_empty())
+            .unwrap_or_else(|| "(untitled)".to_string()),
         color: calendar_color(calendar, &l.calendar_id),
         all_day: l.all_day,
         is_birthday: false,
@@ -436,7 +466,8 @@ fn layout_overlaps(events: &mut [EventView]) {
     let total_lanes = (cluster_max_lane + 1).max(1);
     for &i in &cluster {
         events[i].width_pct = ((100.0 / total_lanes as f64 - 1.0) * 100.0).round() / 100.0;
-        events[i].left_pct = (lanes_of[i] as f64 * (100.0 / total_lanes as f64) * 100.0).round() / 100.0;
+        events[i].left_pct =
+            (lanes_of[i] as f64 * (100.0 / total_lanes as f64) * 100.0).round() / 100.0;
     }
 }
 
@@ -468,7 +499,13 @@ pub fn build_month(inputs: &BuildInputs) -> MonthView {
     let grid_start = week_start(first_of_month);
     let (range_start, range_end) = display_range(inputs.params);
     let grid_end = range_end.date();
-    let localized = localize_events(inputs.events, &inputs.params.visible, inputs.viewer_tz, range_start, range_end);
+    let localized = localize_events(
+        inputs.events,
+        &inputs.params.visible,
+        inputs.viewer_tz,
+        range_start,
+        range_end,
+    );
 
     let mut weeks = Vec::new();
     let mut cursor = grid_start;
@@ -510,8 +547,16 @@ pub struct WeekView {
 pub fn build_week(inputs: &BuildInputs) -> WeekView {
     let start = week_start(inputs.params.date);
     let range_start = start.and_hms_opt(0, 0, 0).unwrap();
-    let range_end = (start + ChronoDuration::days(7)).and_hms_opt(0, 0, 0).unwrap();
-    let localized = localize_events(inputs.events, &inputs.params.visible, inputs.viewer_tz, range_start, range_end);
+    let range_end = (start + ChronoDuration::days(7))
+        .and_hms_opt(0, 0, 0)
+        .unwrap();
+    let localized = localize_events(
+        inputs.events,
+        &inputs.params.visible,
+        inputs.viewer_tz,
+        range_start,
+        range_end,
+    );
 
     let mut days = Vec::new();
     for i in 0..7 {
@@ -536,7 +581,10 @@ pub fn build_week(inputs: &BuildInputs) -> WeekView {
         });
     }
 
-    WeekView { days, hours: hour_rows() }
+    WeekView {
+        days,
+        hours: hour_rows(),
+    }
 }
 
 pub struct DayViewModel {
@@ -547,8 +595,16 @@ pub struct DayViewModel {
 pub fn build_day(inputs: &BuildInputs) -> DayViewModel {
     let date = inputs.params.date;
     let range_start = date.and_hms_opt(0, 0, 0).unwrap();
-    let range_end = (date + ChronoDuration::days(1)).and_hms_opt(0, 0, 0).unwrap();
-    let localized = localize_events(inputs.events, &inputs.params.visible, inputs.viewer_tz, range_start, range_end);
+    let range_end = (date + ChronoDuration::days(1))
+        .and_hms_opt(0, 0, 0)
+        .unwrap();
+    let localized = localize_events(
+        inputs.events,
+        &inputs.params.visible,
+        inputs.viewer_tz,
+        range_start,
+        range_end,
+    );
 
     let mut all_day: Vec<EventView> = birthdays_on(inputs, date);
     let mut timed: Vec<EventView> = Vec::new();
@@ -587,14 +643,29 @@ pub struct AgendaView {
 pub fn build_agenda(inputs: &BuildInputs) -> AgendaView {
     let start = inputs.params.date;
     let range_start = start.and_hms_opt(0, 0, 0).unwrap();
-    let range_end = (start + ChronoDuration::days(30)).and_hms_opt(0, 0, 0).unwrap();
-    let localized = localize_events(inputs.events, &inputs.params.visible, inputs.viewer_tz, range_start, range_end);
+    let range_end = (start + ChronoDuration::days(30))
+        .and_hms_opt(0, 0, 0)
+        .unwrap();
+    let localized = localize_events(
+        inputs.events,
+        &inputs.params.visible,
+        inputs.viewer_tz,
+        range_start,
+        range_end,
+    );
 
     // Birthdays are listed first among that day's events (stable sort keeps
     // them ahead of same-date real events).
-    let mut combined: Vec<(NaiveDate, EventView)> =
-        inputs.birthdays.iter().map(|b| (b.date, birthday_event_view(b))).collect();
-    combined.extend(localized.iter().map(|l| (l.start.date(), to_event_view(l, inputs.calendars))));
+    let mut combined: Vec<(NaiveDate, EventView)> = inputs
+        .birthdays
+        .iter()
+        .map(|b| (b.date, birthday_event_view(b)))
+        .collect();
+    combined.extend(
+        localized
+            .iter()
+            .map(|l| (l.start.date(), to_event_view(l, inputs.calendars))),
+    );
     combined.sort_by_key(|(date, _)| *date);
 
     let mut groups: Vec<AgendaGroup> = Vec::new();
@@ -612,7 +683,11 @@ pub fn build_agenda(inputs: &BuildInputs) -> AgendaView {
         } else {
             date.format("%A, %B %-d").to_string()
         };
-        groups.push(AgendaGroup { date, label, events: vec![ev] });
+        groups.push(AgendaGroup {
+            date,
+            label,
+            events: vec![ev],
+        });
     }
 
     AgendaView { groups }

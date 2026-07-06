@@ -35,7 +35,11 @@ fn resolve_view_params(
     today: NaiveDate,
     has_contacts: bool,
 ) -> ViewParams {
-    let view = raw.view.as_deref().map(ViewKind::parse).unwrap_or(ViewKind::Month);
+    let view = raw
+        .view
+        .as_deref()
+        .map(ViewKind::parse)
+        .unwrap_or(ViewKind::Month);
     let date = raw
         .date
         .as_deref()
@@ -46,10 +50,17 @@ fn resolve_view_params(
         all_calendar_ids.push(view::BIRTHDAY_PSEUDO_ID.to_string());
     }
     let visible: HashSet<String> = match &raw.cal {
-        Some(s) => s.split(',').filter(|p| !p.is_empty()).map(|p| p.to_string()).collect(),
+        Some(s) => s
+            .split(',')
+            .filter(|p| !p.is_empty())
+            .map(|p| p.to_string())
+            .collect(),
         None => {
-            let mut v: HashSet<String> =
-                calendars.iter().filter(|c| c.is_visible).filter_map(|c| c.id.clone()).collect();
+            let mut v: HashSet<String> = calendars
+                .iter()
+                .filter(|c| c.is_visible)
+                .filter_map(|c| c.id.clone())
+                .collect();
             if has_contacts {
                 v.insert(view::BIRTHDAY_PSEUDO_ID.to_string());
             }
@@ -64,7 +75,11 @@ fn resolve_view_params(
     }
 }
 
-async fn fetch_events(session: &AuthedSession, state: &AppState, params: &ViewParams) -> Result<Vec<CalendarEvent>, AppError> {
+async fn fetch_events(
+    session: &AuthedSession,
+    state: &AppState,
+    params: &ViewParams,
+) -> Result<Vec<CalendarEvent>, AppError> {
     let (range_start, range_end) = view::display_range(params);
     let start_utc = jmap_client::tz::convert(range_start, Some(state.viewer_tz), Tz::UTC);
     let end_utc = jmap_client::tz::convert(range_end, Some(state.viewer_tz), Tz::UTC);
@@ -88,8 +103,15 @@ async fn fetch_birthdays(
         return Ok(Vec::new());
     };
     let (range_start, range_end) = view::display_range(params);
-    let cards = session.client.get_contact_cards(contacts_account_id).await?;
-    Ok(jmap_client::jscontact::expand_birthdays(&cards, range_start.date(), range_end.date()))
+    let cards = session
+        .client
+        .get_contact_cards(contacts_account_id)
+        .await?;
+    Ok(jmap_client::jscontact::expand_birthdays(
+        &cards,
+        range_start.date(),
+        range_end.date(),
+    ))
 }
 
 #[derive(Template)]
@@ -136,7 +158,9 @@ struct ContactsTemplate {
 
 fn birthday_label(card: &jmap_client::jscontact::Card) -> Option<String> {
     let anniversaries = card.anniversaries.as_ref()?;
-    let birth = anniversaries.values().find(|a| a.kind.as_deref() == Some("birth"))?;
+    let birth = anniversaries
+        .values()
+        .find(|a| a.kind.as_deref() == Some("birth"))?;
     let (month, day, year) = birth.date.month_day_year()?;
     let date = NaiveDate::from_ymd_opt(year.unwrap_or(2000), month, day)?;
     Some(match year {
@@ -161,7 +185,12 @@ async fn render_fragment(
             .iter()
             .map(|c| {
                 let name = c.display_name();
-                let initial = name.chars().next().unwrap_or('?').to_uppercase().to_string();
+                let initial = name
+                    .chars()
+                    .next()
+                    .unwrap_or('?')
+                    .to_uppercase()
+                    .to_string();
                 ContactRow {
                     initial,
                     name,
@@ -207,7 +236,11 @@ async fn render_fragment(
         }
         ViewKind::Day => {
             let d = view::build_day(&inputs);
-            DayTemplate { day: d.day, hours: d.hours }.render()
+            DayTemplate {
+                day: d.day,
+                hours: d.hours,
+            }
+            .render()
         }
         ViewKind::Agenda => {
             let a = view::build_agenda(&inputs);
@@ -232,7 +265,11 @@ struct SidebarCalendarVM {
     toggle_href: String,
 }
 
-fn sidebar_calendars(calendars: &[Calendar], params: &ViewParams, has_contacts: bool) -> Vec<SidebarCalendarVM> {
+fn sidebar_calendars(
+    calendars: &[Calendar],
+    params: &ViewParams,
+    has_contacts: bool,
+) -> Vec<SidebarCalendarVM> {
     let mut items: Vec<SidebarCalendarVM> = calendars
         .iter()
         .filter_map(|c| {
@@ -395,7 +432,12 @@ pub async fn app_view(
 ) -> Result<Response, AppError> {
     let today = today_in(state.viewer_tz);
     let calendars = session.client.get_calendars(&session.account_id).await?;
-    let params = resolve_view_params(&raw, &calendars, today, session.contacts_account_id.is_some());
+    let params = resolve_view_params(
+        &raw,
+        &calendars,
+        today,
+        session.contacts_account_id.is_some(),
+    );
 
     let parts = build_shell_parts(&session, &state, &calendars, &params, today).await?;
     if is_hx(&headers) {
@@ -508,7 +550,12 @@ fn calendar_options(calendars: &[Calendar], selected: Option<&str>) -> Vec<Calen
         .collect()
 }
 
-fn blank_form(calendars: &[Calendar], params: &ViewParams, viewer_tz: Tz, error: Option<String>) -> EventFormTemplate {
+fn blank_form(
+    calendars: &[Calendar],
+    params: &ViewParams,
+    viewer_tz: Tz,
+    error: Option<String>,
+) -> EventFormTemplate {
     EventFormTemplate {
         is_edit: false,
         event_id: String::new(),
@@ -543,7 +590,11 @@ fn event_to_form(
     let start = event.start.to_naive().unwrap_or_default();
     let duration = parse_duration(&event.duration).unwrap_or_default();
     let end = start + duration;
-    let calendar_id = event.calendar_ids.as_ref().and_then(|m| m.keys().next()).cloned();
+    let calendar_id = event
+        .calendar_ids
+        .as_ref()
+        .and_then(|m| m.keys().next())
+        .cloned();
 
     let (repeat_freq, repeat_interval, repeat_end_mode, repeat_until, repeat_count) =
         match event.recurrence_rules.as_ref().and_then(|r| r.first()) {
@@ -556,13 +607,25 @@ fn event_to_form(
                     _ => "none",
                 };
                 let (mode, until, count) = if let Some(u) = &rule.until {
-                    ("until", u.date().map(|d| d.format("%Y-%m-%d").to_string()).unwrap_or_default(), 5)
+                    (
+                        "until",
+                        u.date()
+                            .map(|d| d.format("%Y-%m-%d").to_string())
+                            .unwrap_or_default(),
+                        5,
+                    )
                 } else if let Some(c) = rule.count {
                     ("count", params.date.format("%Y-%m-%d").to_string(), c)
                 } else {
                     ("never", params.date.format("%Y-%m-%d").to_string(), 5)
                 };
-                (freq.to_string(), rule.interval.unwrap_or(1), mode.to_string(), until, count)
+                (
+                    freq.to_string(),
+                    rule.interval.unwrap_or(1),
+                    mode.to_string(),
+                    until,
+                    count,
+                )
             }
             None => (
                 "none".to_string(),
@@ -611,9 +674,16 @@ pub async fn event_new_form(
 ) -> Result<Response, AppError> {
     let today = today_in(state.viewer_tz);
     let calendars = session.client.get_calendars(&session.account_id).await?;
-    let params = resolve_view_params(&raw, &calendars, today, session.contacts_account_id.is_some());
+    let params = resolve_view_params(
+        &raw,
+        &calendars,
+        today,
+        session.contacts_account_id.is_some(),
+    );
     let form = blank_form(&calendars, &params, state.viewer_tz, None);
-    let modal_html = form.render().map_err(|e| AppError::bad_request(e.to_string()))?;
+    let modal_html = form
+        .render()
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
 
     if is_hx(&headers) {
         Ok(Html(modal_html).into_response())
@@ -633,11 +703,21 @@ pub async fn event_edit_form(
 ) -> Result<Response, AppError> {
     let today = today_in(state.viewer_tz);
     let calendars = session.client.get_calendars(&session.account_id).await?;
-    let params = resolve_view_params(&raw, &calendars, today, session.contacts_account_id.is_some());
-    let events = session.client.get_events(&session.account_id, &[id]).await?;
+    let params = resolve_view_params(
+        &raw,
+        &calendars,
+        today,
+        session.contacts_account_id.is_some(),
+    );
+    let events = session
+        .client
+        .get_events(&session.account_id, &[id])
+        .await?;
     let event = events.first().ok_or(jmap_client::Error::NotFound)?;
     let form = event_to_form(event, &calendars, &params, None);
-    let modal_html = form.render().map_err(|e| AppError::bad_request(e.to_string()))?;
+    let modal_html = form
+        .render()
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
 
     if is_hx(&headers) {
         Ok(Html(modal_html).into_response())
@@ -694,12 +774,18 @@ fn parse_dt(date: &str, time: &str) -> Option<NaiveDateTime> {
 
 fn build_event_from_form(form: &EventFormBody, uid: String) -> Result<CalendarEvent, String> {
     let all_day = form.all_day.is_some();
-    let time = if all_day { "00:00" } else { form.start_time.as_str() };
+    let time = if all_day {
+        "00:00"
+    } else {
+        form.start_time.as_str()
+    };
     let start = parse_dt(&form.start_date, time).ok_or("invalid start date/time")?;
 
     let duration = if all_day {
-        let start_date = NaiveDate::parse_from_str(&form.start_date, "%Y-%m-%d").map_err(|_| "invalid start date")?;
-        let end_date = NaiveDate::parse_from_str(&form.end_date, "%Y-%m-%d").map_err(|_| "invalid end date")?;
+        let start_date = NaiveDate::parse_from_str(&form.start_date, "%Y-%m-%d")
+            .map_err(|_| "invalid start date")?;
+        let end_date = NaiveDate::parse_from_str(&form.end_date, "%Y-%m-%d")
+            .map_err(|_| "invalid end date")?;
         let days = (end_date - start_date).num_days().max(1);
         chrono::Duration::days(days)
     } else {
@@ -748,9 +834,11 @@ fn build_event_from_form(form: &EventFormBody, uid: String) -> Result<CalendarEv
         match form.repeat_end_mode.as_str() {
             "count" => rule.count = Some(form.repeat_count.max(1)),
             "until" => {
-                let until_date =
-                    NaiveDate::parse_from_str(&form.repeat_until, "%Y-%m-%d").map_err(|_| "invalid repeat end date")?;
-                rule.until = Some(LocalDateTime::from_naive(until_date.and_hms_opt(23, 59, 59).unwrap()));
+                let until_date = NaiveDate::parse_from_str(&form.repeat_until, "%Y-%m-%d")
+                    .map_err(|_| "invalid repeat end date")?;
+                rule.until = Some(LocalDateTime::from_naive(
+                    until_date.and_hms_opt(23, 59, 59).unwrap(),
+                ));
             }
             _ => {}
         }
@@ -776,12 +864,21 @@ async fn mutation_response(
             date: Some(back_date.to_string()),
             cal: Some(back_cal.to_string()),
         };
-        let params = resolve_view_params(&raw, &calendars, today, session.contacts_account_id.is_some());
+        let params = resolve_view_params(
+            &raw,
+            &calendars,
+            today,
+            session.contacts_account_id.is_some(),
+        );
         let fragment = render_fragment(session, state, &calendars, &params, today).await?;
-        let body = format!(r#"<div id="view" class="view-container" hx-swap-oob="true">{fragment}</div>"#);
+        let body =
+            format!(r#"<div id="view" class="view-container" hx-swap-oob="true">{fragment}</div>"#);
         Ok(Html(body).into_response())
     } else {
-        Ok(Redirect::to(&format!("/app?view={back_view}&date={back_date}&cal={back_cal}")).into_response())
+        Ok(Redirect::to(&format!(
+            "/app?view={back_view}&date={back_date}&cal={back_cal}"
+        ))
+        .into_response())
     }
 }
 
@@ -796,8 +893,19 @@ pub async fn event_create(
         Ok(e) => e,
         Err(msg) => return render_form_error(&state, &session, &form, false, None, msg).await,
     };
-    session.client.create_event(&session.account_id, &event).await?;
-    mutation_response(&state, &session, &headers, &form.back_view, &form.back_date, &form.back_cal).await
+    session
+        .client
+        .create_event(&session.account_id, &event)
+        .await?;
+    mutation_response(
+        &state,
+        &session,
+        &headers,
+        &form.back_view,
+        &form.back_date,
+        &form.back_cal,
+    )
+    .await
 }
 
 pub async fn event_update(
@@ -811,13 +919,25 @@ pub async fn event_update(
         Ok(e) => e,
         Err(msg) => return render_form_error(&state, &session, &form, true, Some(id), msg).await,
     };
-    let mut patch = serde_json::to_value(&event).map_err(|e| AppError::bad_request(e.to_string()))?;
+    let mut patch =
+        serde_json::to_value(&event).map_err(|e| AppError::bad_request(e.to_string()))?;
     if let Some(obj) = patch.as_object_mut() {
         obj.remove("id");
         obj.remove("uid");
     }
-    session.client.update_event(&session.account_id, &id, patch).await?;
-    mutation_response(&state, &session, &headers, &form.back_view, &form.back_date, &form.back_cal).await
+    session
+        .client
+        .update_event(&session.account_id, &id, patch)
+        .await?;
+    mutation_response(
+        &state,
+        &session,
+        &headers,
+        &form.back_view,
+        &form.back_date,
+        &form.back_cal,
+    )
+    .await
 }
 
 async fn render_form_error(
@@ -835,7 +955,12 @@ async fn render_form_error(
         date: Some(form.back_date.clone()),
         cal: Some(form.back_cal.clone()),
     };
-    let params = resolve_view_params(&raw, &calendars, today, session.contacts_account_id.is_some());
+    let params = resolve_view_params(
+        &raw,
+        &calendars,
+        today,
+        session.contacts_account_id.is_some(),
+    );
     let mut tpl = blank_form(&calendars, &params, state.viewer_tz, Some(message));
     tpl.is_edit = is_edit;
     tpl.event_id = event_id.unwrap_or_default();
@@ -854,7 +979,9 @@ async fn render_form_error(
     tpl.repeat_end_mode = form.repeat_end_mode.clone();
     tpl.repeat_until = form.repeat_until.clone();
     tpl.repeat_count = form.repeat_count;
-    let body = tpl.render().map_err(|e| AppError::bad_request(e.to_string()))?;
+    let body = tpl
+        .render()
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
     Ok(Html(body).into_response())
 }
 
@@ -872,6 +999,17 @@ pub async fn event_delete(
     headers: HeaderMap,
     Form(form): Form<DeleteFormBody>,
 ) -> Result<Response, AppError> {
-    session.client.destroy_event(&session.account_id, &id).await?;
-    mutation_response(&state, &session, &headers, &form.back_view, &form.back_date, &form.back_cal).await
+    session
+        .client
+        .destroy_event(&session.account_id, &id)
+        .await?;
+    mutation_response(
+        &state,
+        &session,
+        &headers,
+        &form.back_view,
+        &form.back_date,
+        &form.back_cal,
+    )
+    .await
 }

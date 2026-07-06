@@ -8,7 +8,8 @@ use crate::error::Error;
 use crate::jscalendar::{Calendar, CalendarEvent, Id};
 use crate::jscontact::Card;
 use crate::protocol::{
-    MethodCall, Request, Response, Session, CAPABILITY_CALENDARS, CAPABILITY_CONTACTS, CAPABILITY_CORE,
+    MethodCall, Request, Response, Session, CAPABILITY_CALENDARS, CAPABILITY_CONTACTS,
+    CAPABILITY_CORE,
 };
 
 #[derive(Debug, Clone)]
@@ -91,12 +92,19 @@ impl Client {
     /// `None` when the server doesn't advertise JMAP Contacts at all —
     /// callers should treat contacts/birthdays as an optional feature.
     pub fn contacts_account_id(&self) -> Option<String> {
-        self.session.as_ref().and_then(|s| s.contacts_account_id()).map(|s| s.to_string())
+        self.session
+            .as_ref()
+            .and_then(|s| s.contacts_account_id())
+            .map(|s| s.to_string())
     }
 
     /// Issue a raw JMAP request: the low-level primitive everything else is
     /// built on, exposed so callers can batch/chain calls themselves.
-    pub async fn call(&self, using: Vec<String>, calls: Vec<MethodCall>) -> Result<Response, Error> {
+    pub async fn call(
+        &self,
+        using: Vec<String>,
+        calls: Vec<MethodCall>,
+    ) -> Result<Response, Error> {
         let req = Request {
             using,
             method_calls: calls,
@@ -116,7 +124,10 @@ impl Client {
     }
 
     fn using(&self) -> Vec<String> {
-        vec![CAPABILITY_CORE.to_string(), CAPABILITY_CALENDARS.to_string()]
+        vec![
+            CAPABILITY_CORE.to_string(),
+            CAPABILITY_CALENDARS.to_string(),
+        ]
     }
 
     fn using_contacts(&self) -> Vec<String> {
@@ -143,7 +154,11 @@ impl Client {
         Ok(serde_json::from_value(list.clone())?)
     }
 
-    pub async fn create_calendar(&self, account_id: &str, calendar: &Calendar) -> Result<Calendar, Error> {
+    pub async fn create_calendar(
+        &self,
+        account_id: &str,
+        calendar: &Calendar,
+    ) -> Result<Calendar, Error> {
         let mut create = BTreeMap::new();
         create.insert("new".to_string(), serde_json::to_value(calendar)?);
         let resp = self
@@ -206,10 +221,7 @@ impl Client {
             )
             .await?;
         let result = resp.result_for("c0")?;
-        if let Some(err) = result
-            .get("notDestroyed")
-            .and_then(|v| v.get(id))
-        {
+        if let Some(err) = result.get("notDestroyed").and_then(|v| v.get(id)) {
             return Err(Error::Protocol(format!("calendar not destroyed: {err}")));
         }
         Ok(())
@@ -270,7 +282,11 @@ impl Client {
         Ok(serde_json::from_value(list.clone())?)
     }
 
-    pub async fn get_events(&self, account_id: &str, ids: &[Id]) -> Result<Vec<CalendarEvent>, Error> {
+    pub async fn get_events(
+        &self,
+        account_id: &str,
+        ids: &[Id],
+    ) -> Result<Vec<CalendarEvent>, Error> {
         let resp = self
             .call(
                 self.using(),
@@ -288,7 +304,11 @@ impl Client {
         Ok(serde_json::from_value(list.clone())?)
     }
 
-    pub async fn create_event(&self, account_id: &str, event: &CalendarEvent) -> Result<CalendarEvent, Error> {
+    pub async fn create_event(
+        &self,
+        account_id: &str,
+        event: &CalendarEvent,
+    ) -> Result<CalendarEvent, Error> {
         let mut create = BTreeMap::new();
         create.insert("new".to_string(), serde_json::to_value(event)?);
         let resp = self
@@ -314,7 +334,12 @@ impl Client {
         Ok(serde_json::from_value(merged)?)
     }
 
-    pub async fn update_event(&self, account_id: &str, id: &str, patch: Value) -> Result<(), Error> {
+    pub async fn update_event(
+        &self,
+        account_id: &str,
+        id: &str,
+        patch: Value,
+    ) -> Result<(), Error> {
         let mut update = BTreeMap::new();
         update.insert(id.to_string(), patch);
         let resp = self
@@ -354,7 +379,10 @@ impl Client {
 
     // ---- Contacts -------------------------------------------------------
 
-    pub async fn get_address_books(&self, account_id: &str) -> Result<Vec<crate::jscontact::AddressBook>, Error> {
+    pub async fn get_address_books(
+        &self,
+        account_id: &str,
+    ) -> Result<Vec<crate::jscontact::AddressBook>, Error> {
         let resp = self
             .call(
                 self.using_contacts(),
