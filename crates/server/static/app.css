@@ -1,5 +1,9 @@
 /* JSCalendar — design system: CSS custom properties, light/dark themes. */
 :root {
+  /* Tells the browser which palette to use for native widget chrome
+     (checkboxes, radios, date/time pickers, number spinners, selects) —
+     without this they keep rendering light even when --bg etc. go dark. */
+  color-scheme: light dark;
   --bg: #f7f8fb;
   --bg-elevated: #ffffff;
   --bg-sunken: #eef0f5;
@@ -37,6 +41,7 @@
   }
 }
 :root[data-theme="dark"] {
+  color-scheme: dark;
   --bg: #0b0f19;
   --bg-elevated: #161b28;
   --bg-sunken: #0e1320;
@@ -50,6 +55,7 @@
   --today-bg: #1b2140;
 }
 :root[data-theme="light"] {
+  color-scheme: light;
   --bg: #f7f8fb;
   --bg-elevated: #ffffff;
   --bg-sunken: #eef0f5;
@@ -126,6 +132,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .field-checkbox input { width: auto; }
 .field-inline { display: flex; align-items: center; gap: 0.4em; font-size: 0.9em; color: var(--text-muted); }
 .inline-number { width: 4em; padding: 0.2em 0.4em; border-radius: 4px; border: 1px solid var(--border); background: var(--bg); }
+input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 
 /* ---- error page ---- */
 .error-page { min-height: 100vh; display: flex; align-items: center; justify-content: center; }
