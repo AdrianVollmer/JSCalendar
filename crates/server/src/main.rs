@@ -57,6 +57,20 @@ async fn main() {
             "/app/contact/{id}",
             patch(routes::contact_update).delete(routes::contact_delete_hx),
         )
+        .route("/app/calendar/new", get(routes::calendar_new_form))
+        .route("/app/calendar", post(routes::calendar_create))
+        .route(
+            "/app/calendar/{id}/edit",
+            get(routes::calendar_edit_form).post(routes::calendar_update),
+        )
+        .route(
+            "/app/calendar/{id}/delete",
+            post(routes::calendar_delete_post),
+        )
+        .route(
+            "/app/calendar/{id}",
+            patch(routes::calendar_update).delete(routes::calendar_delete_hx),
+        )
         // Served at the root so its default scope covers the whole origin.
         .route_service("/sw.js", ServeFile::new(static_dir.join("sw.js")))
         .nest_service("/static", ServeDir::new(&static_dir))

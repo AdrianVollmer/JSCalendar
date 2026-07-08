@@ -344,6 +344,7 @@ struct SidebarCalendarVM {
     color: String,
     visible: bool,
     toggle_href: String,
+    edit_href: Option<String>,
 }
 
 fn sidebar_calendars(
@@ -351,6 +352,7 @@ fn sidebar_calendars(
     params: &ViewParams,
     has_contacts: bool,
 ) -> Vec<SidebarCalendarVM> {
+    let back_qs = params.query_string(params.view, params.date);
     let mut items: Vec<SidebarCalendarVM> = calendars
         .iter()
         .filter_map(|c| {
@@ -359,6 +361,7 @@ fn sidebar_calendars(
                 color: view::calendar_color(Some(c), &id),
                 visible: params.visible.contains(&id),
                 toggle_href: params.toggle_href(&id),
+                edit_href: Some(format!("/app/calendar/{id}/edit?{back_qs}")),
                 name: c.name.clone(),
                 id,
             })
@@ -372,9 +375,16 @@ fn sidebar_calendars(
             color: view::BIRTHDAY_COLOR.to_string(),
             visible: params.visible.contains(view::BIRTHDAY_PSEUDO_ID),
             toggle_href: params.toggle_href(view::BIRTHDAY_PSEUDO_ID),
+            edit_href: None,
         });
     }
     items
+}
+
+#[derive(Template)]
+#[template(path = "calendar_list.html")]
+struct CalendarListTemplate {
+    calendars: Vec<SidebarCalendarVM>,
 }
 
 fn view_links(params: &ViewParams, has_contacts: bool) -> Vec<ViewLink> {
@@ -1548,6 +1558,347 @@ async fn contact_delete_inner(
         &form.back_date,
         &form.back_cal,
         Some(&form.back_q),
+    )
+    .await
+}
+
+// ---- Calendar create/edit form ------------------------------------------
+
+const DEFAULT_CALENDAR_COLOR: &str = "#3b82f6";
+
+#[derive(Template)]
+#[template(path = "calendar_form.html")]
+struct CalendarFormTemplate {
+    is_edit: bool,
+    calendar_id: String,
+    back_view: String,
+    back_date: String,
+    back_cal: String,
+    back_q: String,
+    name: String,
+    color: String,
+    description: String,
+    error: Option<String>,
+}
+
+fn blank_calendar_form(params: &ViewParams, error: Option<String>) -> CalendarFormTemplate {
+    CalendarFormTemplate {
+        is_edit: false,
+        calendar_id: String::new(),
+        back_view: params.view.as_str().to_string(),
+        back_date: params.date.format("%Y-%m-%d").to_string(),
+        back_cal: params.cal_param(),
+        back_q: params.q.clone().unwrap_or_default(),
+        name: String::new(),
+        color: DEFAULT_CALENDAR_COLOR.to_string(),
+        description: String::new(),
+        error,
+    }
+}
+
+fn calendar_to_form(
+    calendar: &Calendar,
+    params: &ViewParams,
+    error: Option<String>,
+) -> CalendarFormTemplate {
+    CalendarFormTemplate {
+        is_edit: true,
+        calendar_id: calendar.id.clone().unwrap_or_default(),
+        back_view: params.view.as_str().to_string(),
+        back_date: params.date.format("%Y-%m-%d").to_string(),
+        back_cal: params.cal_param(),
+        back_q: params.q.clone().unwrap_or_default(),
+        name: calendar.name.clone(),
+        color: calendar
+            .color
+            .clone()
+            .unwrap_or_else(|| DEFAULT_CALENDAR_COLOR.to_string()),
+        description: calendar.description.clone().unwrap_or_default(),
+        error,
+    }
+}
+
+pub async fn calendar_new_form(
+    State(state): State<AppState>,
+    session: AuthedSession,
+    Query(raw): Query<RawViewQuery>,
+    headers: HeaderMap,
+) -> Result<Response, AppError> {
+    let today = today_in(state.viewer_tz);
+    let calendars = session.client.get_calendars(&session.account_id).await?;
+    let params = resolve_view_params(
+        &raw,
+        &calendars,
+        today,
+        session.contacts_account_id.is_some(),
+    );
+    let form = blank_calendar_form(&params, None);
+    let modal_html = form
+        .render()
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+
+    if is_hx(&headers) {
+        Ok(Html(modal_html).into_response())
+    } else {
+        let parts = build_shell_parts(&session, &state, &calendars, &params, today).await?;
+        let ctx = parts.into_shell(Some(modal_html));
+        Ok(render(&ctx))
+    }
+}
+
+pub async fn calendar_edit_form(
+    State(state): State<AppState>,
+    session: AuthedSession,
+    Path(id): Path<String>,
+    Query(raw): Query<RawViewQuery>,
+    headers: HeaderMap,
+) -> Result<Response, AppError> {
+    let today = today_in(state.viewer_tz);
+    let calendars = session.client.get_calendars(&session.account_id).await?;
+    let params = resolve_view_params(
+        &raw,
+        &calendars,
+        today,
+        session.contacts_account_id.is_some(),
+    );
+    let calendar = calendars
+        .iter()
+        .find(|c| c.id.as_deref() == Some(id.as_str()))
+        .ok_or(jmap_client::Error::NotFound)?;
+    let form = calendar_to_form(calendar, &params, None);
+    let modal_html = form
+        .render()
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+
+    if is_hx(&headers) {
+        Ok(Html(modal_html).into_response())
+    } else {
+        let parts = build_shell_parts(&session, &state, &calendars, &params, today).await?;
+        let ctx = parts.into_shell(Some(modal_html));
+        Ok(render(&ctx))
+    }
+}
+
+// ---- Calendar mutations --------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct CalendarFormBody {
+    pub back_view: String,
+    pub back_date: String,
+    pub back_cal: String,
+    #[serde(default)]
+    pub back_q: String,
+    pub name: String,
+    #[serde(default)]
+    pub color: String,
+    #[serde(default)]
+    pub description: String,
+}
+
+fn build_calendar_from_form(form: &CalendarFormBody) -> Result<Calendar, String> {
+    let name = form.name.trim().to_string();
+    if name.is_empty() {
+        return Err("name is required".to_string());
+    }
+    let mut calendar = Calendar::new(name);
+    if !form.color.is_empty() {
+        calendar.color = Some(form.color.clone());
+    }
+    if !form.description.is_empty() {
+        calendar.description = Some(form.description.clone());
+    }
+    Ok(calendar)
+}
+
+async fn render_calendar_form_error(
+    state: &AppState,
+    session: &AuthedSession,
+    form: &CalendarFormBody,
+    is_edit: bool,
+    calendar_id: Option<String>,
+    message: String,
+) -> Result<Response, AppError> {
+    let calendars = session.client.get_calendars(&session.account_id).await?;
+    let today = today_in(state.viewer_tz);
+    let raw = RawViewQuery {
+        view: Some(form.back_view.clone()),
+        date: Some(form.back_date.clone()),
+        cal: Some(form.back_cal.clone()),
+        q: Some(form.back_q.clone()),
+    };
+    let params = resolve_view_params(
+        &raw,
+        &calendars,
+        today,
+        session.contacts_account_id.is_some(),
+    );
+    let mut tpl = blank_calendar_form(&params, Some(message));
+    tpl.is_edit = is_edit;
+    tpl.calendar_id = calendar_id.unwrap_or_default();
+    tpl.name = form.name.clone();
+    tpl.color = form.color.clone();
+    tpl.description = form.description.clone();
+    let body = tpl
+        .render()
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+    Ok(Html(body).into_response())
+}
+
+/// Unlike `mutation_response`, a calendar create/edit/delete can change the
+/// sidebar's calendar list itself (name, color, or membership), so the htmx
+/// path also OOB-swaps `#calendar-list` alongside the usual `#view` refresh.
+async fn calendar_mutation_response(
+    state: &AppState,
+    session: &AuthedSession,
+    headers: &HeaderMap,
+    back_view: &str,
+    back_date: &str,
+    back_cal: &str,
+) -> Result<Response, AppError> {
+    if is_hx(headers) {
+        let today = today_in(state.viewer_tz);
+        let calendars = session.client.get_calendars(&session.account_id).await?;
+        let raw = RawViewQuery {
+            view: Some(back_view.to_string()),
+            date: Some(back_date.to_string()),
+            cal: Some(back_cal.to_string()),
+            q: None,
+        };
+        let has_contacts = session.contacts_account_id.is_some();
+        let params = resolve_view_params(&raw, &calendars, today, has_contacts);
+        let fragment = render_fragment(session, state, &calendars, &params, today).await?;
+        let list_tpl = CalendarListTemplate {
+            calendars: sidebar_calendars(&calendars, &params, has_contacts),
+        };
+        let list_html = list_tpl
+            .render()
+            .map_err(|e| AppError::bad_request(e.to_string()))?;
+        let body = format!(
+            r#"<div id="view" class="view-container" hx-swap-oob="true">{fragment}</div><ul id="calendar-list" class="calendar-list" hx-swap-oob="true">{list_html}</ul>"#
+        );
+        Ok(Html(body).into_response())
+    } else {
+        Ok(Redirect::to(&format!(
+            "/app?view={back_view}&date={back_date}&cal={back_cal}"
+        ))
+        .into_response())
+    }
+}
+
+pub async fn calendar_create(
+    State(state): State<AppState>,
+    session: AuthedSession,
+    headers: HeaderMap,
+    Form(form): Form<CalendarFormBody>,
+) -> Result<Response, AppError> {
+    let calendar = match build_calendar_from_form(&form) {
+        Ok(c) => c,
+        Err(msg) => {
+            return render_calendar_form_error(&state, &session, &form, false, None, msg).await
+        }
+    };
+    let created = session
+        .client
+        .create_calendar(&session.account_id, &calendar)
+        .await?;
+    let mut back_cal = form.back_cal.clone();
+    if let Some(new_id) = &created.id {
+        if !back_cal.split(',').any(|p| p == new_id) {
+            if !back_cal.is_empty() {
+                back_cal.push(',');
+            }
+            back_cal.push_str(new_id);
+        }
+    }
+    calendar_mutation_response(
+        &state,
+        &session,
+        &headers,
+        &form.back_view,
+        &form.back_date,
+        &back_cal,
+    )
+    .await
+}
+
+pub async fn calendar_update(
+    State(state): State<AppState>,
+    session: AuthedSession,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Form(form): Form<CalendarFormBody>,
+) -> Result<Response, AppError> {
+    let calendar = match build_calendar_from_form(&form) {
+        Ok(c) => c,
+        Err(msg) => {
+            return render_calendar_form_error(&state, &session, &form, true, Some(id), msg).await
+        }
+    };
+    let mut patch =
+        serde_json::to_value(&calendar).map_err(|e| AppError::bad_request(e.to_string()))?;
+    if let Some(obj) = patch.as_object_mut() {
+        obj.remove("id");
+    }
+    session
+        .client
+        .update_calendar(&session.account_id, &id, patch)
+        .await?;
+    calendar_mutation_response(
+        &state,
+        &session,
+        &headers,
+        &form.back_view,
+        &form.back_date,
+        &form.back_cal,
+    )
+    .await
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CalendarDeleteFormBody {
+    pub back_view: String,
+    pub back_date: String,
+    pub back_cal: String,
+}
+
+pub async fn calendar_delete_hx(
+    State(state): State<AppState>,
+    session: AuthedSession,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Query(form): Query<CalendarDeleteFormBody>,
+) -> Result<Response, AppError> {
+    calendar_delete_inner(&state, &session, &id, &headers, &form).await
+}
+
+pub async fn calendar_delete_post(
+    State(state): State<AppState>,
+    session: AuthedSession,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Form(form): Form<CalendarDeleteFormBody>,
+) -> Result<Response, AppError> {
+    calendar_delete_inner(&state, &session, &id, &headers, &form).await
+}
+
+async fn calendar_delete_inner(
+    state: &AppState,
+    session: &AuthedSession,
+    id: &str,
+    headers: &HeaderMap,
+    form: &CalendarDeleteFormBody,
+) -> Result<Response, AppError> {
+    session
+        .client
+        .destroy_calendar(&session.account_id, id)
+        .await?;
+    calendar_mutation_response(
+        state,
+        session,
+        headers,
+        &form.back_view,
+        &form.back_date,
+        &form.back_cal,
     )
     .await
 }

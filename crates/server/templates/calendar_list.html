@@ -1,0 +1,11 @@
+{% for cal in calendars %}
+<li>
+  <a class="cal-toggle {% if cal.visible %}visible{% endif %}" data-calendar-id="{{ cal.id }}" href="{{ cal.toggle_href }}" hx-get="{{ cal.toggle_href }}" hx-target="#app-root" hx-push-url="true" hx-swap="outerHTML" style="--cal-color: {{ cal.color }}">
+    <span class="cal-dot"></span>
+    <span class="cal-name">{{ cal.name }}</span>
+  </a>
+  {% if let Some(edit_href) = cal.edit_href %}
+  <a class="btn-icon cal-edit-btn" href="{{ edit_href }}" hx-get="{{ edit_href }}" hx-target="#modal-root" hx-swap="innerHTML" aria-label="Edit {{ cal.name }}">⚙</a>
+  {% endif %}
+</li>
+{% endfor %}

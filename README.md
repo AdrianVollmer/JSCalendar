@@ -92,6 +92,9 @@ it manually instead.
   overlapping-event layout in the week/day grid.
 - Create/edit/delete events through a dialog form, working both via htmx
   (no full page reload) and as a plain HTML form (no JavaScript at all).
+- Create/edit/delete calendars (name, color, description) the same way, from
+  a "+" next to the sidebar's "Calendars" heading and a gear icon on each
+  calendar row; a newly created calendar becomes visible immediately.
 - Light/dark theme (follows system preference, with a manual toggle
   persisted in `localStorage`).
 - PWA: web app manifest, icons, and a service worker that caches the static
@@ -123,6 +126,9 @@ it manually instead.
   the server-rendered views.
 - Participants/attendees, alerts, and sharing (`Calendar/set` `shareWith`)
   are modeled in `jmap-client` but not surfaced in the UI yet.
+- All calendars are real JMAP calendars on the upstream server; there's no
+  support yet for read-only calendars sourced from an external iCalendar
+  (`.ics`) URL, refreshed on a schedule.
 - Contacts have no address-book management UI (creating/renaming address
   books), and editing a contact only exposes name, one email, and birthday —
   not the full JSContact object model. There's no JMAP filter for "has a

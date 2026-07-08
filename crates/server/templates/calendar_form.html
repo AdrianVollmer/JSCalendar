@@ -1,0 +1,49 @@
+<div class="modal-backdrop" id="event-dialog-backdrop">
+<dialog class="event-dialog" open aria-label="{% if is_edit %}Edit calendar{% else %}New calendar{% endif %}">
+  <form class="event-form"
+    method="post"
+    action="{% if is_edit %}/app/calendar/{{ calendar_id }}/edit{% else %}/app/calendar{% endif %}"
+    {% if is_edit %}hx-patch="/app/calendar/{{ calendar_id }}"{% else %}hx-post="/app/calendar"{% endif %}
+    hx-target="#modal-root" hx-swap="innerHTML">
+
+    <header class="event-form-header">
+      <h2>{% if is_edit %}Edit calendar{% else %}New calendar{% endif %}</h2>
+      <a class="btn-icon" href="/app?view={{ back_view }}&amp;date={{ back_date }}&amp;cal={{ back_cal }}&amp;q={{ back_q }}" aria-label="Close">✕</a>
+    </header>
+
+    {% if let Some(err) = error %}
+    <p class="form-error" role="alert">{{ err }}</p>
+    {% endif %}
+
+    <input type="hidden" name="back_view" value="{{ back_view }}">
+    <input type="hidden" name="back_date" value="{{ back_date }}">
+    <input type="hidden" name="back_cal" value="{{ back_cal }}">
+    <input type="hidden" name="back_q" value="{{ back_q }}">
+
+    <label class="field">
+      <span>Name</span>
+      <input type="text" name="name" value="{{ name }}" required autofocus placeholder="Calendar name">
+    </label>
+
+    <div class="field-row">
+      <label class="field field-color">
+        <span>Color</span>
+        <input type="color" name="color" value="{{ color }}">
+      </label>
+      <label class="field">
+        <span>Description</span>
+        <input type="text" name="description" value="{{ description }}" placeholder="Optional">
+      </label>
+    </div>
+
+    <footer class="event-form-footer">
+      {% if is_edit %}
+      <button type="submit" formaction="/app/calendar/{{ calendar_id }}/delete" formnovalidate hx-delete="/app/calendar/{{ calendar_id }}" hx-target="#modal-root" hx-swap="innerHTML" hx-confirm="Delete this calendar? Its events will be deleted too." class="btn btn-danger">Delete</button>
+      {% endif %}
+      <span class="spacer"></span>
+      <a class="btn btn-ghost" href="/app?view={{ back_view }}&amp;date={{ back_date }}&amp;cal={{ back_cal }}&amp;q={{ back_q }}">Cancel</a>
+      <button type="submit" class="btn btn-primary">Save</button>
+    </footer>
+  </form>
+</dialog>
+</div>

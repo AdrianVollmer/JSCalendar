@@ -17,16 +17,12 @@
     </nav>
 
     <div class="sidebar-section">
-      <h2>Calendars</h2>
-      <ul class="calendar-list">
-        {% for cal in calendars %}
-        <li>
-          <a class="cal-toggle {% if cal.visible %}visible{% endif %}" data-calendar-id="{{ cal.id }}" href="{{ cal.toggle_href }}" hx-get="{{ cal.toggle_href }}" hx-target="#app-root" hx-push-url="true" hx-swap="outerHTML" style="--cal-color: {{ cal.color }}">
-            <span class="cal-dot"></span>
-            <span class="cal-name">{{ cal.name }}</span>
-          </a>
-        </li>
-        {% endfor %}
+      <div class="sidebar-section-header">
+        <h2>Calendars</h2>
+        <a class="btn-icon" href="/app/calendar/new?{{ back_qs }}" hx-get="/app/calendar/new?{{ back_qs }}" hx-target="#modal-root" hx-swap="innerHTML" aria-label="New calendar">+</a>
+      </div>
+      <ul class="calendar-list" id="calendar-list">
+        {% include "calendar_list.html" %}
       </ul>
     </div>
 
