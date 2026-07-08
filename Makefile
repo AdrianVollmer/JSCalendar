@@ -104,10 +104,10 @@ docker-build:
 	$(CONTAINER_ENGINE) build -t $(IMAGE):$(TAG) .
 
 docker-run: docker-build
-	$(CONTAINER_ENGINE) run --rm -it -p $(PORT):8787 -e PORT=8787 $(IMAGE):$(TAG)
+	$(CONTAINER_ENGINE) run --rm -it --init -p $(PORT):8787 -e PORT=8787 $(IMAGE):$(TAG)
 
 docker-demo-build:
 	$(CONTAINER_ENGINE) build -f Dockerfile.demo -t $(DEMO_IMAGE):$(TAG) .
 
 docker-demo-run: docker-demo-build
-	$(CONTAINER_ENGINE) run --rm -it -p $(PORT):8787 -e PORT=8787 $(DEMO_IMAGE):$(TAG)
+	$(CONTAINER_ENGINE) run --rm -it --init -p $(PORT):8787 -e PORT=8787 $(DEMO_IMAGE):$(TAG)
