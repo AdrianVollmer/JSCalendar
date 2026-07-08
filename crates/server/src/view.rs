@@ -68,16 +68,26 @@ pub struct ViewParams {
     pub date: NaiveDate,
     pub visible: HashSet<String>,
     pub all_calendar_ids: Vec<String>,
+    /// Free-text contacts filter. Only meaningful for `ViewKind::Contacts`,
+    /// but lives here so it round-trips through URLs the same way
+    /// view/date/cal do.
+    pub q: Option<String>,
 }
 
 impl ViewParams {
     pub fn query_string(&self, view: ViewKind, date: NaiveDate) -> String {
-        format!(
+        let mut s = format!(
             "view={}&date={}&cal={}",
             view.as_str(),
             date.format("%Y-%m-%d"),
             self.cal_param()
-        )
+        );
+        if view == ViewKind::Contacts {
+            if let Some(q) = self.q.as_ref().filter(|q| !q.is_empty()) {
+                s.push_str(&format!("&q={}", crate::webutil::urlencode(q)));
+            }
+        }
+        s
     }
 
     pub fn cal_param(&self) -> String {
@@ -103,12 +113,18 @@ impl ViewParams {
             .cloned()
             .collect::<Vec<_>>()
             .join(",");
-        format!(
+        let mut href = format!(
             "/app?view={}&date={}&cal={}",
             self.view.as_str(),
             self.date.format("%Y-%m-%d"),
             cal
-        )
+        );
+        if self.view == ViewKind::Contacts {
+            if let Some(q) = self.q.as_ref().filter(|q| !q.is_empty()) {
+                href.push_str(&format!("&q={}", crate::webutil::urlencode(q)));
+            }
+        }
+        href
     }
 
     pub fn nav_href(&self, view: ViewKind, date: NaiveDate) -> String {

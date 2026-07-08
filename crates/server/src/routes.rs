@@ -1,13 +1,16 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use askama::Template;
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::Form;
-use chrono::{NaiveDate, NaiveDateTime};
+use chrono::{Datelike, NaiveDate, NaiveDateTime};
 use jmap_client::duration::{format_duration, parse_duration};
 use jmap_client::jscalendar::{Calendar, CalendarEvent, Frequency, LocalDateTime, RecurrenceRule};
+use jmap_client::jscontact::{
+    AddressBook, Anniversary, AnniversaryDate, Card, EmailAddress, NameProperty,
+};
 use jmap_client::tz::Tz;
 use serde::Deserialize;
 use uuid::Uuid;
@@ -23,6 +26,7 @@ pub struct RawViewQuery {
     pub view: Option<String>,
     pub date: Option<String>,
     pub cal: Option<String>,
+    pub q: Option<String>,
 }
 
 fn today_in(tz: Tz) -> NaiveDate {
@@ -72,6 +76,7 @@ fn resolve_view_params(
         date,
         visible,
         all_calendar_ids,
+        q: raw.q.clone().filter(|s| !s.is_empty()),
     }
 }
 
@@ -98,6 +103,15 @@ async fn fetch_events(
 /// each of those fetches as cheap as this protocol allows.
 const CONTACT_PROPERTIES: &[&str] = &["id", "uid", "name", "emails", "anniversaries"];
 
+fn contacts_cache_key(session: &AuthedSession, contacts_account_id: &str) -> String {
+    let api_url = session
+        .client
+        .session()
+        .map(|s| s.api_url.clone())
+        .unwrap_or_default();
+    format!("{api_url}#{contacts_account_id}")
+}
+
 /// Fetches every contact card for the session's account, reusing a recent
 /// result across calendar-view renders instead of re-fetching on every one
 /// (birthdays rarely change, so a full re-fetch per render is pure waste —
@@ -107,12 +121,7 @@ async fn get_contact_cards_cached(
     session: &AuthedSession,
     contacts_account_id: &str,
 ) -> Result<Vec<jmap_client::jscontact::Card>, AppError> {
-    let api_url = session
-        .client
-        .session()
-        .map(|s| s.api_url.clone())
-        .unwrap_or_default();
-    let cache_key = format!("{api_url}#{contacts_account_id}");
+    let cache_key = contacts_cache_key(session, contacts_account_id);
     let ttl = std::time::Duration::from_secs(crate::state::CONTACTS_CACHE_TTL_SECS);
 
     if let Some(entry) = state.contacts_cache.get(&cache_key) {
@@ -133,6 +142,14 @@ async fn get_contact_cards_cached(
         },
     );
     Ok(cards)
+}
+
+/// Called after our own create/update/delete so the change shows up
+/// immediately instead of waiting out the TTL.
+fn invalidate_contacts_cache(state: &AppState, session: &AuthedSession, contacts_account_id: &str) {
+    state
+        .contacts_cache
+        .remove(&contacts_cache_key(session, contacts_account_id));
 }
 
 async fn fetch_birthdays(
@@ -185,16 +202,20 @@ struct AgendaTemplate {
 }
 
 struct ContactRow {
+    id: String,
     name: String,
     initial: String,
     email: Option<String>,
     birthday_label: Option<String>,
+    edit_href: String,
 }
 
 #[derive(Template)]
 #[template(path = "view_contacts.html")]
 struct ContactsTemplate {
     contacts: Vec<ContactRow>,
+    q: String,
+    cal_param: String,
 }
 
 fn birthday_label(card: &jmap_client::jscontact::Card) -> Option<String> {
@@ -208,6 +229,14 @@ fn birthday_label(card: &jmap_client::jscontact::Card) -> Option<String> {
         Some(y) => format!("{} {}", date.format("%B %-d"), y),
         None => date.format("%B %-d").to_string(),
     })
+}
+
+fn matches_filter(card: &jmap_client::jscontact::Card, q: &str) -> bool {
+    let q = q.to_lowercase();
+    card.display_name().to_lowercase().contains(&q)
+        || card
+            .primary_email()
+            .is_some_and(|e| e.to_lowercase().contains(&q))
 }
 
 async fn render_fragment(
@@ -224,6 +253,7 @@ async fn render_fragment(
         };
         let mut contacts: Vec<ContactRow> = cards
             .iter()
+            .filter(|c| params.q.as_deref().is_none_or(|q| matches_filter(c, q)))
             .map(|c| {
                 let name = c.display_name();
                 let initial = name
@@ -232,7 +262,13 @@ async fn render_fragment(
                     .unwrap_or('?')
                     .to_uppercase()
                     .to_string();
+                let id = c.id.clone().unwrap_or_default();
                 ContactRow {
+                    edit_href: format!(
+                        "/app/contact/{id}/edit?{}",
+                        params.query_string(ViewKind::Contacts, params.date)
+                    ),
+                    id,
                     initial,
                     name,
                     email: c.primary_email().map(|s| s.to_string()),
@@ -241,9 +277,13 @@ async fn render_fragment(
             })
             .collect();
         contacts.sort_by(|a, b| a.name.cmp(&b.name));
-        return ContactsTemplate { contacts }
-            .render()
-            .map_err(|e| AppError::bad_request(format!("template error: {e}")));
+        return ContactsTemplate {
+            contacts,
+            q: params.q.clone().unwrap_or_default(),
+            cal_param: params.cal_param(),
+        }
+        .render()
+        .map_err(|e| AppError::bad_request(format!("template error: {e}")));
     }
 
     let events = fetch_events(session, state, params).await?;
@@ -896,6 +936,7 @@ async fn mutation_response(
     back_view: &str,
     back_date: &str,
     back_cal: &str,
+    back_q: Option<&str>,
 ) -> Result<Response, AppError> {
     if is_hx(headers) {
         let today = today_in(state.viewer_tz);
@@ -904,6 +945,7 @@ async fn mutation_response(
             view: Some(back_view.to_string()),
             date: Some(back_date.to_string()),
             cal: Some(back_cal.to_string()),
+            q: back_q.map(|s| s.to_string()),
         };
         let params = resolve_view_params(
             &raw,
@@ -916,8 +958,12 @@ async fn mutation_response(
             format!(r#"<div id="view" class="view-container" hx-swap-oob="true">{fragment}</div>"#);
         Ok(Html(body).into_response())
     } else {
+        let q_suffix = back_q
+            .filter(|q| !q.is_empty())
+            .map(|q| format!("&q={}", crate::webutil::urlencode(q)))
+            .unwrap_or_default();
         Ok(Redirect::to(&format!(
-            "/app?view={back_view}&date={back_date}&cal={back_cal}"
+            "/app?view={back_view}&date={back_date}&cal={back_cal}{q_suffix}"
         ))
         .into_response())
     }
@@ -945,6 +991,7 @@ pub async fn event_create(
         &form.back_view,
         &form.back_date,
         &form.back_cal,
+        None,
     )
     .await
 }
@@ -977,6 +1024,7 @@ pub async fn event_update(
         &form.back_view,
         &form.back_date,
         &form.back_cal,
+        None,
     )
     .await
 }
@@ -995,6 +1043,7 @@ async fn render_form_error(
         view: Some(form.back_view.clone()),
         date: Some(form.back_date.clone()),
         cal: Some(form.back_cal.clone()),
+        q: None,
     };
     let params = resolve_view_params(
         &raw,
@@ -1033,17 +1082,366 @@ pub struct DeleteFormBody {
     pub back_cal: String,
 }
 
-pub async fn event_delete(
+pub async fn event_delete_hx(
+    State(state): State<AppState>,
+    session: AuthedSession,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Query(form): Query<DeleteFormBody>,
+) -> Result<Response, AppError> {
+    event_delete_inner(&state, &session, &id, &headers, &form).await
+}
+
+pub async fn event_delete_post(
     State(state): State<AppState>,
     session: AuthedSession,
     Path(id): Path<String>,
     headers: HeaderMap,
     Form(form): Form<DeleteFormBody>,
 ) -> Result<Response, AppError> {
+    event_delete_inner(&state, &session, &id, &headers, &form).await
+}
+
+async fn event_delete_inner(
+    state: &AppState,
+    session: &AuthedSession,
+    id: &str,
+    headers: &HeaderMap,
+    form: &DeleteFormBody,
+) -> Result<Response, AppError> {
     session
         .client
-        .destroy_event(&session.account_id, &id)
+        .destroy_event(&session.account_id, id)
         .await?;
+    mutation_response(
+        state,
+        session,
+        headers,
+        &form.back_view,
+        &form.back_date,
+        &form.back_cal,
+        None,
+    )
+    .await
+}
+
+// ---- Contact create/edit form ------------------------------------------
+
+struct AddressBookOption {
+    id: String,
+    name: String,
+    selected: bool,
+}
+
+fn address_book_options(
+    address_books: &[AddressBook],
+    selected: Option<&str>,
+) -> Vec<AddressBookOption> {
+    let selected = selected.or_else(|| address_books.first().and_then(|a| a.id.as_deref()));
+    address_books
+        .iter()
+        .filter_map(|a| {
+            let id = a.id.clone()?;
+            let is_selected = Some(id.as_str()) == selected;
+            Some(AddressBookOption {
+                name: a.name.clone(),
+                selected: is_selected,
+                id,
+            })
+        })
+        .collect()
+}
+
+#[derive(Template)]
+#[template(path = "contact_form.html")]
+struct ContactFormTemplate {
+    is_edit: bool,
+    contact_id: String,
+    back_view: String,
+    back_date: String,
+    back_cal: String,
+    back_q: String,
+    address_books: Vec<AddressBookOption>,
+    name: String,
+    email: String,
+    birthday_date: String,
+    hide_birth_year: bool,
+    error: Option<String>,
+}
+
+fn blank_contact_form(
+    address_books: &[AddressBook],
+    params: &ViewParams,
+    error: Option<String>,
+) -> ContactFormTemplate {
+    ContactFormTemplate {
+        is_edit: false,
+        contact_id: String::new(),
+        back_view: ViewKind::Contacts.as_str().to_string(),
+        back_date: params.date.format("%Y-%m-%d").to_string(),
+        back_cal: params.cal_param(),
+        back_q: params.q.clone().unwrap_or_default(),
+        address_books: address_book_options(address_books, None),
+        name: String::new(),
+        email: String::new(),
+        birthday_date: String::new(),
+        hide_birth_year: false,
+        error,
+    }
+}
+
+fn contact_to_form(
+    card: &Card,
+    address_books: &[AddressBook],
+    params: &ViewParams,
+    error: Option<String>,
+) -> ContactFormTemplate {
+    let address_book_id = card
+        .address_book_ids
+        .as_ref()
+        .and_then(|m| m.keys().next())
+        .cloned();
+    let (birthday_date, hide_birth_year) = card
+        .anniversaries
+        .as_ref()
+        .and_then(|m| m.values().find(|a| a.kind.as_deref() == Some("birth")))
+        .and_then(|a| a.date.month_day_year())
+        .and_then(|(month, day, year)| {
+            let date = NaiveDate::from_ymd_opt(year.unwrap_or(2000), month, day)?;
+            Some((date.format("%Y-%m-%d").to_string(), year.is_none()))
+        })
+        .unwrap_or_default();
+
+    ContactFormTemplate {
+        is_edit: true,
+        contact_id: card.id.clone().unwrap_or_default(),
+        back_view: ViewKind::Contacts.as_str().to_string(),
+        back_date: params.date.format("%Y-%m-%d").to_string(),
+        back_cal: params.cal_param(),
+        back_q: params.q.clone().unwrap_or_default(),
+        address_books: address_book_options(address_books, address_book_id.as_deref()),
+        name: card
+            .name
+            .as_ref()
+            .and_then(|n| n.full.clone())
+            .unwrap_or_default(),
+        email: card.primary_email().unwrap_or_default().to_string(),
+        birthday_date,
+        hide_birth_year,
+        error,
+    }
+}
+
+pub async fn contact_new_form(
+    State(state): State<AppState>,
+    session: AuthedSession,
+    Query(raw): Query<RawViewQuery>,
+    headers: HeaderMap,
+) -> Result<Response, AppError> {
+    let today = today_in(state.viewer_tz);
+    let calendars = session.client.get_calendars(&session.account_id).await?;
+    let params = resolve_view_params(
+        &raw,
+        &calendars,
+        today,
+        session.contacts_account_id.is_some(),
+    );
+    let address_books = match &session.contacts_account_id {
+        Some(id) => session.client.get_address_books(id).await?,
+        None => Vec::new(),
+    };
+    let form = blank_contact_form(&address_books, &params, None);
+    let modal_html = form
+        .render()
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+
+    if is_hx(&headers) {
+        Ok(Html(modal_html).into_response())
+    } else {
+        let parts = build_shell_parts(&session, &state, &calendars, &params, today).await?;
+        let ctx = parts.into_shell(Some(modal_html));
+        Ok(render(&ctx))
+    }
+}
+
+pub async fn contact_edit_form(
+    State(state): State<AppState>,
+    session: AuthedSession,
+    Path(id): Path<String>,
+    Query(raw): Query<RawViewQuery>,
+    headers: HeaderMap,
+) -> Result<Response, AppError> {
+    let today = today_in(state.viewer_tz);
+    let calendars = session.client.get_calendars(&session.account_id).await?;
+    let params = resolve_view_params(
+        &raw,
+        &calendars,
+        today,
+        session.contacts_account_id.is_some(),
+    );
+    let contacts_account_id = session
+        .contacts_account_id
+        .clone()
+        .ok_or(jmap_client::Error::NotFound)?;
+    let address_books = session
+        .client
+        .get_address_books(&contacts_account_id)
+        .await?;
+    let cards = get_contact_cards_cached(&state, &session, &contacts_account_id).await?;
+    let card = cards
+        .iter()
+        .find(|c| c.id.as_deref() == Some(id.as_str()))
+        .ok_or(jmap_client::Error::NotFound)?;
+    let form = contact_to_form(card, &address_books, &params, None);
+    let modal_html = form
+        .render()
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+
+    if is_hx(&headers) {
+        Ok(Html(modal_html).into_response())
+    } else {
+        let parts = build_shell_parts(&session, &state, &calendars, &params, today).await?;
+        let ctx = parts.into_shell(Some(modal_html));
+        Ok(render(&ctx))
+    }
+}
+
+// ---- Contact mutations --------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct ContactFormBody {
+    pub back_view: String,
+    pub back_date: String,
+    pub back_cal: String,
+    pub back_q: String,
+    pub address_book_id: String,
+    pub name: String,
+    #[serde(default)]
+    pub email: String,
+    #[serde(default)]
+    pub birthday_date: String,
+    #[serde(default)]
+    pub hide_birth_year: Option<String>,
+}
+
+fn build_card_from_form(form: &ContactFormBody, uid: String) -> Result<Card, String> {
+    let name = form.name.trim().to_string();
+    if name.is_empty() {
+        return Err("name is required".to_string());
+    }
+
+    let mut card = Card::new(uid);
+    card.name = Some(NameProperty {
+        full: Some(name),
+        ..Default::default()
+    });
+    if !form.email.is_empty() {
+        let mut emails = BTreeMap::new();
+        emails.insert(
+            "e1".to_string(),
+            EmailAddress {
+                address: form.email.clone(),
+                ..Default::default()
+            },
+        );
+        card.emails = Some(emails);
+    }
+    if !form.birthday_date.is_empty() {
+        let date = NaiveDate::parse_from_str(&form.birthday_date, "%Y-%m-%d")
+            .map_err(|_| "invalid birthday date")?;
+        let date_value = if form.hide_birth_year.is_some() {
+            AnniversaryDate::PartialDate {
+                year: None,
+                month: Some(date.month()),
+                day: Some(date.day()),
+            }
+        } else {
+            AnniversaryDate::Timestamp {
+                utc: format!("{}T00:00:00Z", date.format("%Y-%m-%d")),
+            }
+        };
+        let mut anniversaries = BTreeMap::new();
+        anniversaries.insert(
+            "bday".to_string(),
+            Anniversary {
+                type_: "Anniversary".to_string(),
+                kind: Some("birth".to_string()),
+                date: date_value,
+                extra: BTreeMap::new(),
+            },
+        );
+        card.anniversaries = Some(anniversaries);
+    }
+    let mut address_book_ids = BTreeMap::new();
+    address_book_ids.insert(form.address_book_id.clone(), true);
+    card.address_book_ids = Some(address_book_ids);
+
+    Ok(card)
+}
+
+async fn render_contact_form_error(
+    state: &AppState,
+    session: &AuthedSession,
+    form: &ContactFormBody,
+    is_edit: bool,
+    contact_id: Option<String>,
+    message: String,
+) -> Result<Response, AppError> {
+    let calendars = session.client.get_calendars(&session.account_id).await?;
+    let today = today_in(state.viewer_tz);
+    let raw = RawViewQuery {
+        view: Some(form.back_view.clone()),
+        date: Some(form.back_date.clone()),
+        cal: Some(form.back_cal.clone()),
+        q: Some(form.back_q.clone()),
+    };
+    let params = resolve_view_params(
+        &raw,
+        &calendars,
+        today,
+        session.contacts_account_id.is_some(),
+    );
+    let address_books = match &session.contacts_account_id {
+        Some(id) => session.client.get_address_books(id).await?,
+        None => Vec::new(),
+    };
+    let mut tpl = blank_contact_form(&address_books, &params, Some(message));
+    tpl.is_edit = is_edit;
+    tpl.contact_id = contact_id.unwrap_or_default();
+    tpl.address_books = address_book_options(&address_books, Some(&form.address_book_id));
+    tpl.name = form.name.clone();
+    tpl.email = form.email.clone();
+    tpl.birthday_date = form.birthday_date.clone();
+    tpl.hide_birth_year = form.hide_birth_year.is_some();
+    let body = tpl
+        .render()
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+    Ok(Html(body).into_response())
+}
+
+pub async fn contact_create(
+    State(state): State<AppState>,
+    session: AuthedSession,
+    headers: HeaderMap,
+    Form(form): Form<ContactFormBody>,
+) -> Result<Response, AppError> {
+    let Some(contacts_account_id) = session.contacts_account_id.clone() else {
+        return Err(AppError::bad_request(
+            "this server does not support contacts",
+        ));
+    };
+    let uid = Uuid::new_v4().to_string();
+    let card = match build_card_from_form(&form, uid) {
+        Ok(c) => c,
+        Err(msg) => {
+            return render_contact_form_error(&state, &session, &form, false, None, msg).await
+        }
+    };
+    session
+        .client
+        .create_contact_card(&contacts_account_id, &card)
+        .await?;
+    invalidate_contacts_cache(&state, &session, &contacts_account_id);
     mutation_response(
         &state,
         &session,
@@ -1051,6 +1449,105 @@ pub async fn event_delete(
         &form.back_view,
         &form.back_date,
         &form.back_cal,
+        Some(&form.back_q),
+    )
+    .await
+}
+
+pub async fn contact_update(
+    State(state): State<AppState>,
+    session: AuthedSession,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Form(form): Form<ContactFormBody>,
+) -> Result<Response, AppError> {
+    let Some(contacts_account_id) = session.contacts_account_id.clone() else {
+        return Err(AppError::bad_request(
+            "this server does not support contacts",
+        ));
+    };
+    let card = match build_card_from_form(&form, String::new()) {
+        Ok(c) => c,
+        Err(msg) => {
+            return render_contact_form_error(&state, &session, &form, true, Some(id), msg).await
+        }
+    };
+    let mut patch =
+        serde_json::to_value(&card).map_err(|e| AppError::bad_request(e.to_string()))?;
+    if let Some(obj) = patch.as_object_mut() {
+        obj.remove("id");
+        obj.remove("uid");
+    }
+    session
+        .client
+        .update_contact_card(&contacts_account_id, &id, patch)
+        .await?;
+    invalidate_contacts_cache(&state, &session, &contacts_account_id);
+    mutation_response(
+        &state,
+        &session,
+        &headers,
+        &form.back_view,
+        &form.back_date,
+        &form.back_cal,
+        Some(&form.back_q),
+    )
+    .await
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ContactDeleteFormBody {
+    pub back_view: String,
+    pub back_date: String,
+    pub back_cal: String,
+    pub back_q: String,
+}
+
+pub async fn contact_delete_hx(
+    State(state): State<AppState>,
+    session: AuthedSession,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Query(form): Query<ContactDeleteFormBody>,
+) -> Result<Response, AppError> {
+    contact_delete_inner(&state, &session, &id, &headers, &form).await
+}
+
+pub async fn contact_delete_post(
+    State(state): State<AppState>,
+    session: AuthedSession,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Form(form): Form<ContactDeleteFormBody>,
+) -> Result<Response, AppError> {
+    contact_delete_inner(&state, &session, &id, &headers, &form).await
+}
+
+async fn contact_delete_inner(
+    state: &AppState,
+    session: &AuthedSession,
+    id: &str,
+    headers: &HeaderMap,
+    form: &ContactDeleteFormBody,
+) -> Result<Response, AppError> {
+    let Some(contacts_account_id) = session.contacts_account_id.clone() else {
+        return Err(AppError::bad_request(
+            "this server does not support contacts",
+        ));
+    };
+    session
+        .client
+        .destroy_contact_card(&contacts_account_id, id)
+        .await?;
+    invalidate_contacts_cache(state, session, &contacts_account_id);
+    mutation_response(
+        state,
+        session,
+        headers,
+        &form.back_view,
+        &form.back_date,
+        &form.back_cal,
+        Some(&form.back_q),
     )
     .await
 }

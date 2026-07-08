@@ -264,6 +264,10 @@ fn dispatch(db: &mut Db, name: &str, args: &Value) -> (String, Value) {
                 get_by_ids_response(&account_id, &db.cards, args),
             )
         }
+        "ContactCard/set" => (
+            name.into(),
+            set_response(&account_id, &mut db.cards, &mut db.next_id, args, "card"),
+        ),
         other => (
             "error".into(),
             json!({ "type": "unknownMethod", "description": format!("mock server does not implement {other}") }),

@@ -98,10 +98,13 @@ it manually instead.
   app shell for instant loads and offline resilience (calendar data itself
   is always live — there's no offline data cache, since it belongs to your
   JMAP server).
-- Contacts: a read-only "Contacts" view (`AddressBook/get` + `ContactCard/get`)
-  listing name/email, and a **Birthdays** entry in the sidebar — toggle it
-  like any other calendar — that overlays each contact's `birth` anniversary
-  (RFC 9553 `anniversaries`) as a recurring, non-editable all-day item across
+- Contacts: a "Contacts" view (`AddressBook/get` + `ContactCard/get`) listing
+  name/email, with a live-filter text field (matches name or email, updates
+  as you type via htmx, degrades to submit-on-search without JavaScript) and
+  create/edit/delete through the same dialog-form pattern as events
+  (`ContactCard/set`). A **Birthdays** entry in the sidebar — toggle it like
+  any other calendar — overlays each contact's `birth` anniversary (RFC 9553
+  `anniversaries`) as a recurring, non-editable all-day item across
   month/week/day/agenda views, with the contact's age shown when their
   birth year is known. Both are hidden automatically if the JMAP server
   doesn't advertise Contacts support.
@@ -120,15 +123,18 @@ it manually instead.
   the server-rendered views.
 - Participants/attendees, alerts, and sharing (`Calendar/set` `shareWith`)
   are modeled in `jmap-client` but not surfaced in the UI yet.
-- Contacts are read-only: no create/edit/delete UI, and no address-book
-  management. There's no JMAP filter for "has a birthday in this range", so
-  `ContactCard/get` always fetches the whole address book (requesting only
+- Contacts have no address-book management UI (creating/renaming address
+  books), and editing a contact only exposes name, one email, and birthday —
+  not the full JSContact object model. There's no JMAP filter for "has a
+  birthday in this range" or "name/email contains", so `ContactCard/get`
+  always fetches the whole address book (requesting only
   `uid`/`name`/`emails`/`anniversaries` via its `properties` argument, not
-  full cards) rather than fetching a slice of it; the result is cached per
-  account for `CONTACTS_CACHE_TTL_SECS` (15 minutes) so calendar views don't
-  re-fetch it on every render. Fine for a personal address book; a very
-  large one would want incremental sync via `ContactCard/changes` instead
-  of a blind TTL.
+  full cards) and the text filter is applied server-side in memory rather
+  than pushed down to the server; the fetched result is cached per account
+  for `CONTACTS_CACHE_TTL_SECS` (15 minutes), invalidated immediately on any
+  create/edit/delete, so calendar views don't re-fetch it on every render.
+  Fine for a personal address book; a very large one would want incremental
+  sync via `ContactCard/changes` instead of a blind TTL.
 
 ## Development
 

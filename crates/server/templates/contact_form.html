@@ -1,0 +1,64 @@
+<div class="modal-backdrop" id="event-dialog-backdrop">
+<dialog class="event-dialog" open aria-label="{% if is_edit %}Edit contact{% else %}New contact{% endif %}">
+  <form class="event-form"
+    method="post"
+    action="{% if is_edit %}/app/contact/{{ contact_id }}/edit{% else %}/app/contact{% endif %}"
+    {% if is_edit %}hx-patch="/app/contact/{{ contact_id }}"{% else %}hx-post="/app/contact"{% endif %}
+    hx-target="#modal-root" hx-swap="innerHTML">
+
+    <header class="event-form-header">
+      <h2>{% if is_edit %}Edit contact{% else %}New contact{% endif %}</h2>
+      <a class="btn-icon" href="/app?view={{ back_view }}&amp;date={{ back_date }}&amp;cal={{ back_cal }}&amp;q={{ back_q }}" aria-label="Close">✕</a>
+    </header>
+
+    {% if let Some(err) = error %}
+    <p class="form-error" role="alert">{{ err }}</p>
+    {% endif %}
+
+    <input type="hidden" name="back_view" value="{{ back_view }}">
+    <input type="hidden" name="back_date" value="{{ back_date }}">
+    <input type="hidden" name="back_cal" value="{{ back_cal }}">
+    <input type="hidden" name="back_q" value="{{ back_q }}">
+
+    <label class="field">
+      <span>Name</span>
+      <input type="text" name="name" value="{{ name }}" required autofocus placeholder="Full name">
+    </label>
+
+    <div class="field-row">
+      <label class="field">
+        <span>Address book</span>
+        <select name="address_book_id">
+          {% for ab in address_books %}
+          <option value="{{ ab.id }}" {% if ab.selected %}selected{% endif %}>{{ ab.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="field">
+        <span>Email</span>
+        <input type="email" name="email" value="{{ email }}" placeholder="Optional">
+      </label>
+    </div>
+
+    <div class="field-row">
+      <label class="field">
+        <span>Birthday</span>
+        <input type="date" name="birthday_date" value="{{ birthday_date }}">
+      </label>
+      <label class="field field-checkbox">
+        <input type="checkbox" name="hide_birth_year" value="1" {% if hide_birth_year %}checked{% endif %}>
+        <span>Hide year</span>
+      </label>
+    </div>
+
+    <footer class="event-form-footer">
+      {% if is_edit %}
+      <button type="submit" formaction="/app/contact/{{ contact_id }}/delete" formnovalidate hx-delete="/app/contact/{{ contact_id }}" hx-target="#modal-root" hx-swap="innerHTML" hx-confirm="Delete this contact?" class="btn btn-danger">Delete</button>
+      {% endif %}
+      <span class="spacer"></span>
+      <a class="btn btn-ghost" href="/app?view={{ back_view }}&amp;date={{ back_date }}&amp;cal={{ back_cal }}&amp;q={{ back_q }}">Cancel</a>
+      <button type="submit" class="btn btn-primary">Save</button>
+    </footer>
+  </form>
+</dialog>
+</div>

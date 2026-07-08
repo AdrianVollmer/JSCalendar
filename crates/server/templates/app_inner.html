@@ -4,7 +4,11 @@
       <img src="/static/icons/icon.svg" alt="" width="28" height="28">
       <span>JSCalendar</span>
     </div>
+    {% if is_dated_view %}
     <a class="btn btn-primary btn-block new-event-btn" href="/app/event/new?{{ back_qs }}" hx-get="/app/event/new?{{ back_qs }}" hx-target="#modal-root" hx-swap="innerHTML">+ New event</a>
+    {% else %}
+    <a class="btn btn-primary btn-block new-event-btn" href="/app/contact/new?{{ back_qs }}" hx-get="/app/contact/new?{{ back_qs }}" hx-target="#modal-root" hx-swap="innerHTML">+ New contact</a>
+    {% endif %}
 
     <nav class="view-switch">
       {% for link in view_links %}

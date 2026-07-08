@@ -430,6 +430,77 @@ impl Client {
             .ok_or_else(|| Error::Protocol("missing list".into()))?;
         Ok(serde_json::from_value(list.clone())?)
     }
+
+    pub async fn create_contact_card(&self, account_id: &str, card: &Card) -> Result<Card, Error> {
+        let mut create = BTreeMap::new();
+        create.insert("new".to_string(), serde_json::to_value(card)?);
+        let resp = self
+            .call(
+                self.using_contacts(),
+                vec![MethodCall(
+                    "ContactCard/set".into(),
+                    json!({ "accountId": account_id, "create": create }),
+                    "c0".into(),
+                )],
+            )
+            .await?;
+        let result = resp.result_for("c0")?;
+        if let Some(err) = result.get("notCreated").and_then(|v| v.get("new")) {
+            return Err(Error::Protocol(format!("contact card not created: {err}")));
+        }
+        let created = result
+            .get("created")
+            .and_then(|c| c.get("new"))
+            .ok_or_else(|| Error::Protocol("missing created contact card".into()))?;
+        let mut merged = serde_json::to_value(card)?;
+        merge_json(&mut merged, created);
+        Ok(serde_json::from_value(merged)?)
+    }
+
+    pub async fn update_contact_card(
+        &self,
+        account_id: &str,
+        id: &str,
+        patch: Value,
+    ) -> Result<(), Error> {
+        let mut update = BTreeMap::new();
+        update.insert(id.to_string(), patch);
+        let resp = self
+            .call(
+                self.using_contacts(),
+                vec![MethodCall(
+                    "ContactCard/set".into(),
+                    json!({ "accountId": account_id, "update": update }),
+                    "c0".into(),
+                )],
+            )
+            .await?;
+        let result = resp.result_for("c0")?;
+        if let Some(err) = result.get("notUpdated").and_then(|v| v.get(id)) {
+            return Err(Error::Protocol(format!("contact card not updated: {err}")));
+        }
+        Ok(())
+    }
+
+    pub async fn destroy_contact_card(&self, account_id: &str, id: &str) -> Result<(), Error> {
+        let resp = self
+            .call(
+                self.using_contacts(),
+                vec![MethodCall(
+                    "ContactCard/set".into(),
+                    json!({ "accountId": account_id, "destroy": [id] }),
+                    "c0".into(),
+                )],
+            )
+            .await?;
+        let result = resp.result_for("c0")?;
+        if let Some(err) = result.get("notDestroyed").and_then(|v| v.get(id)) {
+            return Err(Error::Protocol(format!(
+                "contact card not destroyed: {err}"
+            )));
+        }
+        Ok(())
+    }
 }
 
 fn merge_json(base: &mut Value, patch: &Value) {

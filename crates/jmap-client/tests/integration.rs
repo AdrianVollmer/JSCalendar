@@ -299,3 +299,68 @@ async fn contacts_account_resolves_and_cards_parse_with_birthday() {
     assert_eq!(occs.len(), 1);
     assert_eq!(occs[0].name, "Ada Lovelace");
 }
+
+#[tokio::test]
+async fn create_contact_card_merges_server_assigned_fields() {
+    let server = MockServer::start().await;
+    let client = connected_client(&server).await;
+
+    let body = json!({
+        "methodResponses": [
+            ["ContactCard/set", {
+                "accountId": "a1",
+                "oldState": "s0",
+                "newState": "s1",
+                "created": {
+                    "new": { "id": "card42" }
+                }
+            }, "c0"]
+        ],
+        "sessionState": "abc123"
+    });
+    Mock::given(method("POST"))
+        .and(path("/api"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(body))
+        .mount(&server)
+        .await;
+
+    let mut card = jmap_client::jscontact::Card::new("card42-uid");
+    card.name = Some(jmap_client::jscontact::NameProperty {
+        full: Some("Grace Hopper".into()),
+        ..Default::default()
+    });
+    let created = client.create_contact_card("a1", &card).await.unwrap();
+    assert_eq!(created.id.as_deref(), Some("card42"));
+    assert_eq!(created.display_name(), "Grace Hopper");
+}
+
+#[tokio::test]
+async fn destroy_contact_card_reports_protocol_error_on_failure() {
+    let server = MockServer::start().await;
+    let client = connected_client(&server).await;
+
+    let body = json!({
+        "methodResponses": [
+            ["ContactCard/set", {
+                "accountId": "a1",
+                "oldState": "s0",
+                "newState": "s0",
+                "notDestroyed": {
+                    "card1": { "type": "notFound" }
+                }
+            }, "c0"]
+        ],
+        "sessionState": "abc123"
+    });
+    Mock::given(method("POST"))
+        .and(path("/api"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(body))
+        .mount(&server)
+        .await;
+
+    let err = client
+        .destroy_contact_card("a1", "card1")
+        .await
+        .unwrap_err();
+    assert!(matches!(err, jmap_client::Error::Protocol(_)));
+}

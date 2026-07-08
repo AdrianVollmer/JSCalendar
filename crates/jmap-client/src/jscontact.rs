@@ -140,6 +140,21 @@ pub struct Card {
 }
 
 impl Card {
+    pub fn new(uid: impl Into<Id>) -> Self {
+        Self {
+            type_: card_type(),
+            version: version_1(),
+            id: None,
+            uid: uid.into(),
+            kind: None,
+            name: None,
+            emails: None,
+            anniversaries: None,
+            address_book_ids: None,
+            extra: BTreeMap::new(),
+        }
+    }
+
     pub fn display_name(&self) -> String {
         self.name
             .as_ref()

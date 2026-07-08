@@ -1,18 +1,33 @@
 <div class="contacts-view">
+  <div class="contacts-toolbar">
+    <form class="contacts-search-form">
+      <input type="hidden" name="view" value="contacts">
+      <input type="hidden" name="cal" value="{{ cal_param }}">
+      <input type="search" id="contacts-search" name="q" value="{{ q }}" placeholder="Filter contacts…"
+        hx-get="/app" hx-include="closest form" hx-target="#view" hx-swap="innerHTML" hx-push-url="true"
+        hx-trigger="keyup changed delay:300ms, search" hx-preserve="true" autocomplete="off">
+    </form>
+  </div>
+
   {% if contacts.is_empty() %}
-  <p class="agenda-empty">No contacts found.</p>
+  <p class="agenda-empty">
+    {% if q.is_empty() %}No contacts found.{% else %}No contacts match "{{ q }}".{% endif %}
+  </p>
   {% endif %}
+
   <ul class="contacts-list">
     {% for c in contacts %}
-    <li class="contact-row">
-      <span class="contact-avatar">{{ c.initial }}</span>
-      <span class="contact-main">
-        <span class="contact-name">{{ c.name }}</span>
-        {% if let Some(email) = c.email %}<span class="contact-email">{{ email }}</span>{% endif %}
-      </span>
-      {% if let Some(bday) = c.birthday_label %}
-      <span class="contact-birthday">🎂 {{ bday }}</span>
-      {% endif %}
+    <li>
+      <a class="contact-row" data-contact-id="{{ c.id }}" href="{{ c.edit_href }}" hx-get="{{ c.edit_href }}" hx-target="#modal-root" hx-swap="innerHTML">
+        <span class="contact-avatar">{{ c.initial }}</span>
+        <span class="contact-main">
+          <span class="contact-name">{{ c.name }}</span>
+          {% if let Some(email) = c.email %}<span class="contact-email">{{ email }}</span>{% endif %}
+        </span>
+        {% if let Some(bday) = c.birthday_label %}
+        <span class="contact-birthday">🎂 {{ bday }}</span>
+        {% endif %}
+      </a>
     </li>
     {% endfor %}
   </ul>

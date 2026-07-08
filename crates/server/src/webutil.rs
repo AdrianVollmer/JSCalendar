@@ -31,3 +31,15 @@ pub fn render<T: Template>(tpl: &T) -> Response {
             .into_response(),
     }
 }
+
+/// Minimal `application/x-www-form-urlencoded`-style percent-encoding for
+/// values embedded in hrefs we build ourselves (query params, redirects).
+pub fn urlencode(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            ' ' => "+".to_string(),
+            c if c.is_ascii_alphanumeric() || "-_.~".contains(c) => c.to_string(),
+            c => format!("%{:02X}", c as u32),
+        })
+        .collect()
+}

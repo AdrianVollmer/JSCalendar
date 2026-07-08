@@ -38,10 +38,24 @@ async fn main() {
             "/app/event/{id}/edit",
             get(routes::event_edit_form).post(routes::event_update),
         )
-        .route("/app/event/{id}/delete", post(routes::event_delete))
+        .route("/app/event/{id}/delete", post(routes::event_delete_post))
         .route(
             "/app/event/{id}",
-            patch(routes::event_update).delete(routes::event_delete),
+            patch(routes::event_update).delete(routes::event_delete_hx),
+        )
+        .route("/app/contact/new", get(routes::contact_new_form))
+        .route("/app/contact", post(routes::contact_create))
+        .route(
+            "/app/contact/{id}/edit",
+            get(routes::contact_edit_form).post(routes::contact_update),
+        )
+        .route(
+            "/app/contact/{id}/delete",
+            post(routes::contact_delete_post),
+        )
+        .route(
+            "/app/contact/{id}",
+            patch(routes::contact_update).delete(routes::contact_delete_hx),
         )
         // Served at the root so its default scope covers the whole origin.
         .route_service("/sw.js", ServeFile::new(static_dir.join("sw.js")))

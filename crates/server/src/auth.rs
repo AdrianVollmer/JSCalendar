@@ -10,7 +10,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::state::{AppState, UserSession};
-use crate::webutil::render;
+use crate::webutil::{render, urlencode};
 
 const COOKIE_NAME: &str = "jscal_sid";
 
@@ -82,9 +82,7 @@ pub async fn login(
             let jar = jar.add(cookie);
             (jar, Redirect::to("/app")).into_response()
         }
-        Err(msg) => {
-            Redirect::to(&format!("/login?error={}", urlencoding_light(&msg))).into_response()
-        }
+        Err(msg) => Redirect::to(&format!("/login?error={}", urlencode(&msg))).into_response(),
     }
 }
 
@@ -132,16 +130,6 @@ async fn do_login(state: AppState, req: LoginRequest) -> Result<(Cookie<'static>
     cookie.set_http_only(true);
     cookie.set_same_site(SameSite::Lax);
     Ok((cookie, username))
-}
-
-fn urlencoding_light(s: &str) -> String {
-    s.chars()
-        .map(|c| match c {
-            ' ' => "+".to_string(),
-            c if c.is_ascii_alphanumeric() || "-_.~".contains(c) => c.to_string(),
-            c => format!("%{:02X}", c as u32),
-        })
-        .collect()
 }
 
 pub async fn logout(State(state): State<AppState>, jar: CookieJar) -> impl IntoResponse {
