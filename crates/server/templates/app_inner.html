@@ -26,6 +26,29 @@
       </ul>
     </div>
 
+    <div class="sidebar-section">
+      <div class="sidebar-section-header">
+        <h2>Subscriptions</h2>
+        <a class="btn-icon" href="/app/ics/new?{{ back_qs }}" hx-get="/app/ics/new?{{ back_qs }}" hx-target="#modal-root" hx-swap="innerHTML" aria-label="Add subscription">+</a>
+      </div>
+      <ul class="calendar-list" id="ics-subscription-list">
+        {% for cal in ics_subscriptions %}
+        <li>
+          <a class="cal-toggle {% if cal.visible %}visible{% endif %}" data-calendar-id="{{ cal.id }}" href="{{ cal.toggle_href }}" hx-get="{{ cal.toggle_href }}" hx-target="#app-root" hx-push-url="true" hx-swap="outerHTML" style="--cal-color: {{ cal.color }}">
+            <span class="cal-dot"></span>
+            <span class="cal-name">{{ cal.name }}</span>
+            {% if let Some(err) = cal.error %}
+            <span class="cal-error" title="Last fetch failed: {{ err }}">⚠</span>
+            {% endif %}
+          </a>
+          {% if let Some(edit_href) = cal.edit_href %}
+          <a class="btn-icon cal-edit-btn" href="{{ edit_href }}" hx-get="{{ edit_href }}" hx-target="#modal-root" hx-swap="innerHTML" aria-label="Edit {{ cal.name }}">⚙</a>
+          {% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+
     <div class="sidebar-footer">
       <span class="sidebar-user">{{ username }}</span>
       <form method="post" action="/logout"><button type="submit" class="btn-link">Sign out</button></form>

@@ -111,6 +111,20 @@ it manually instead.
   month/week/day/agenda views, with the contact's age shown when their
   birth year is known. Both are hidden automatically if the JMAP server
   doesn't advertise Contacts support.
+- Subscribed iCal-URL calendars: a "Subscriptions" section in the sidebar
+  (separate from the real "Calendars" section) lets you add any public
+  `.ics` URL as a read-only overlay calendar, with its own name/color and
+  the same visibility toggle as everything else. These aren't JMAP
+  calendars — the app has no database of its own, so subscriptions live
+  only in memory for the running server process (lost on restart, same as
+  login sessions) — each feed is fetched and parsed on demand and cached
+  for `ICS_CACHE_TTL_SECS` (30 minutes) before being re-fetched, and a
+  small ⚠ badge appears next to a subscription if its last fetch failed.
+  The parser (`server/src/ics.rs`) covers `SUMMARY`/`DTSTART`/`DTEND`/
+  `DURATION`, a common `RRULE` subset (`FREQ`/`INTERVAL`/`COUNT`/`UNTIL`/
+  `BYDAY`/`BYMONTHDAY`/`BYMONTH`), and `EXDATE`; unrecognized recurrence
+  shapes fall back to showing just the first occurrence rather than
+  guessing.
 
 ## Known limitations
 
@@ -126,9 +140,11 @@ it manually instead.
   the server-rendered views.
 - Participants/attendees, alerts, and sharing (`Calendar/set` `shareWith`)
   are modeled in `jmap-client` but not surfaced in the UI yet.
-- All calendars are real JMAP calendars on the upstream server; there's no
-  support yet for read-only calendars sourced from an external iCalendar
-  (`.ics`) URL, refreshed on a schedule.
+- ICS-subscription URLs aren't persisted to disk (see above), and the ICS
+  parser ignores `VTIMEZONE` blocks — a `DTSTART` with a `TZID` parameter
+  but no trailing `Z` is treated as floating rather than resolved against
+  the named zone. `VALARM`, `ATTENDEE`, and per-instance `RECURRENCE-ID`
+  overrides in a feed are ignored entirely.
 - Contacts have no address-book management UI (creating/renaming address
   books), and editing a contact only exposes name, one email, and birthday —
   not the full JSContact object model. There's no JMAP filter for "has a

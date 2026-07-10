@@ -8,8 +8,8 @@
     <ul class="agenda-list">
       {% for ev in group.events %}
       <li>
-        {% if ev.is_birthday %}
-        <span class="agenda-event birthday-pill" style="--cal-color: {{ ev.color }}">
+        {% if ev.read_only %}
+        <span class="agenda-event readonly-pill" style="--cal-color: {{ ev.color }}">
           <span class="cal-dot"></span>
           <span class="agenda-title">{{ ev.title }}</span>
         </span>

@@ -9,8 +9,8 @@
         <a class="month-daynum" href="/app?view=day&amp;date={{ day.iso }}&amp;cal={{ cal_param }}" hx-get="/app?view=day&amp;date={{ day.iso }}&amp;cal={{ cal_param }}" hx-target="#app-root" hx-push-url="true" hx-swap="outerHTML">{{ day.day_num }}</a>
         <div class="month-events">
           {% for ev in day.events %}
-          {% if ev.is_birthday %}
-          <span class="event-pill birthday-pill" style="--cal-color: {{ ev.color }}" title="{{ ev.title }}">
+          {% if ev.read_only %}
+          <span class="event-pill readonly-pill" style="--cal-color: {{ ev.color }}" title="{{ ev.title }}">
             <span class="event-title">{{ ev.title }}</span>
           </span>
           {% else %}

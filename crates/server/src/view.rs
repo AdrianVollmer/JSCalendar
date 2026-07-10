@@ -2,7 +2,7 @@ use chrono::{Datelike, Duration as ChronoDuration, Months, NaiveDate, NaiveDateT
 use jmap_client::duration::parse_duration;
 use jmap_client::jscalendar::{Calendar, CalendarEvent};
 use jmap_client::tz::{self, Tz};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 pub const HOUR_HEIGHT_PX: f64 = 48.0;
@@ -249,9 +249,10 @@ pub struct EventView {
     pub title: String,
     pub color: String,
     pub all_day: bool,
-    /// Birthdays are displayed alongside real events but aren't editable —
-    /// they're derived from contact data, not a JMAP calendar object.
-    pub is_birthday: bool,
+    /// Birthdays and ICS-subscription events are displayed alongside real
+    /// events but aren't editable — they aren't backed by a JMAP calendar
+    /// object the app can write to.
+    pub read_only: bool,
     pub time_label: String,
     pub edit_href: String,
     pub top_px: f64,
@@ -270,7 +271,7 @@ fn birthday_event_view(occ: &jmap_client::jscontact::BirthdayOccurrence) -> Even
         title,
         color: BIRTHDAY_COLOR.to_string(),
         all_day: true,
-        is_birthday: true,
+        read_only: true,
         time_label: "Birthday".to_string(),
         edit_href: String::new(),
         top_px: 0.0,
@@ -402,7 +403,12 @@ fn time_label(start: NaiveDateTime, end: NaiveDateTime) -> String {
     )
 }
 
-fn to_event_view(l: &Localized, calendars: &[Calendar]) -> EventView {
+fn to_event_view(
+    l: &Localized,
+    calendars: &[Calendar],
+    ics_colors: &HashMap<String, String>,
+) -> EventView {
+    let read_only = crate::ics::is_ics_pseudo_id(&l.calendar_id);
     let calendar = calendars
         .iter()
         .find(|c| c.id.as_deref() == Some(l.calendar_id.as_str()));
@@ -418,23 +424,30 @@ fn to_event_view(l: &Localized, calendars: &[Calendar]) -> EventView {
             .clone()
             .filter(|t| !t.is_empty())
             .unwrap_or_else(|| "(untitled)".to_string()),
-        color: calendar_color(calendar, &l.calendar_id),
+        color: ics_colors
+            .get(&l.calendar_id)
+            .cloned()
+            .unwrap_or_else(|| calendar_color(calendar, &l.calendar_id)),
         all_day: l.all_day,
-        is_birthday: false,
+        read_only,
         time_label: if l.all_day {
             "All day".to_string()
         } else {
             time_label(l.start, l.end)
         },
-        edit_href: format!(
-            "/app/event/{}/edit{}",
-            id,
-            l.event
-                .recurrence_id
-                .as_ref()
-                .map(|r| format!("?rid={}", urlencoding_light(&r.0)))
-                .unwrap_or_default()
-        ),
+        edit_href: if read_only {
+            String::new()
+        } else {
+            format!(
+                "/app/event/{}/edit{}",
+                id,
+                l.event
+                    .recurrence_id
+                    .as_ref()
+                    .map(|r| format!("?rid={}", urlencoding_light(&r.0)))
+                    .unwrap_or_default()
+            )
+        },
         top_px: (minutes_from_midnight / 60.0 * HOUR_HEIGHT_PX).round(),
         height_px: (duration_minutes / 60.0 * HOUR_HEIGHT_PX).max(22.0).round(),
         left_pct: 0.0,
@@ -491,6 +504,10 @@ pub struct BuildInputs<'a> {
     pub events: &'a [CalendarEvent],
     pub calendars: &'a [Calendar],
     pub birthdays: &'a [jmap_client::jscontact::BirthdayOccurrence],
+    /// Configured color for each ICS-subscription pseudo calendar id,
+    /// since those aren't real `Calendar` objects `calendar_color` can
+    /// look up.
+    pub ics_colors: &'a HashMap<String, String>,
     pub viewer_tz: Tz,
     pub params: &'a ViewParams,
     pub today: NaiveDate,
@@ -533,7 +550,7 @@ pub fn build_month(inputs: &BuildInputs) -> MonthView {
                 localized
                     .iter()
                     .filter(|l| l.start.date() == cursor)
-                    .map(|l| to_event_view(l, inputs.calendars)),
+                    .map(|l| to_event_view(l, inputs.calendars, inputs.ics_colors)),
             );
             let more_count = day_events.len().saturating_sub(4);
             week.push(DayCell {
@@ -580,7 +597,7 @@ pub fn build_week(inputs: &BuildInputs) -> WeekView {
         let mut all_day: Vec<EventView> = birthdays_on(inputs, date);
         let mut timed: Vec<EventView> = Vec::new();
         for l in localized.iter().filter(|l| l.start.date() == date) {
-            let ev = to_event_view(l, inputs.calendars);
+            let ev = to_event_view(l, inputs.calendars, inputs.ics_colors);
             if l.all_day {
                 all_day.push(ev);
             } else {
@@ -625,7 +642,7 @@ pub fn build_day(inputs: &BuildInputs) -> DayViewModel {
     let mut all_day: Vec<EventView> = birthdays_on(inputs, date);
     let mut timed: Vec<EventView> = Vec::new();
     for l in &localized {
-        let ev = to_event_view(l, inputs.calendars);
+        let ev = to_event_view(l, inputs.calendars, inputs.ics_colors);
         if l.all_day {
             all_day.push(ev);
         } else {
@@ -677,11 +694,12 @@ pub fn build_agenda(inputs: &BuildInputs) -> AgendaView {
         .iter()
         .map(|b| (b.date, birthday_event_view(b)))
         .collect();
-    combined.extend(
-        localized
-            .iter()
-            .map(|l| (l.start.date(), to_event_view(l, inputs.calendars))),
-    );
+    combined.extend(localized.iter().map(|l| {
+        (
+            l.start.date(),
+            to_event_view(l, inputs.calendars, inputs.ics_colors),
+        )
+    }));
     combined.sort_by_key(|(date, _)| *date);
 
     let mut groups: Vec<AgendaGroup> = Vec::new();

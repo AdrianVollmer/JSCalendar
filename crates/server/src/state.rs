@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use dashmap::DashMap;
+use jmap_client::jscalendar::CalendarEvent;
 use jmap_client::jscontact::Card;
 use jmap_client::tz::Tz;
 use jmap_client::Client;
@@ -28,6 +29,33 @@ pub const CONTACTS_CACHE_TTL_SECS: u64 = 15 * 60;
 pub struct CachedContacts {
     pub cards: Vec<Card>,
     pub fetched_at: Instant,
+}
+
+/// A subscribed read-only calendar sourced from an external `.ics` URL.
+/// Not a real JMAP calendar — there's no upstream server to store this on,
+/// so (matching this app's "no persistence by design" stance for anything
+/// that isn't the JMAP server's own data) the subscription list lives only
+/// in memory and is lost on restart.
+#[derive(Debug, Clone)]
+pub struct IcsSubscription {
+    pub id: String,
+    pub name: String,
+    pub color: String,
+    pub url: String,
+}
+
+/// How long a fetched-and-parsed `.ics` feed is trusted before re-fetching
+/// — the "regularly update by fetching" refresh, done lazily on read rather
+/// than via a background scheduler (same lazy-TTL shape as the contacts
+/// cache above).
+pub const ICS_CACHE_TTL_SECS: u64 = 30 * 60;
+
+pub struct CachedIcsEvents {
+    pub events: Vec<CalendarEvent>,
+    pub fetched_at: Instant,
+    /// Set when the last fetch/parse failed, so the view can show a subtle
+    /// indicator instead of silently showing stale or empty data forever.
+    pub error: Option<String>,
 }
 
 /// Pre-fills the login form so a demo/test instance (e.g. wired up to
@@ -57,6 +85,12 @@ pub struct AppState {
     /// only unique within one JMAP server) so two different accounts never
     /// collide even if their ids happen to match.
     pub contacts_cache: Arc<DashMap<String, CachedContacts>>,
+    /// Subscribed iCal-URL calendars, keyed the same way as `contacts_cache`.
+    pub ics_subscriptions: Arc<DashMap<String, Vec<IcsSubscription>>>,
+    /// Parsed events from each subscription's last successful fetch, keyed
+    /// by subscription id (globally unique, no account-key prefix needed).
+    pub ics_cache: Arc<DashMap<String, CachedIcsEvents>>,
+    pub http_client: reqwest::Client,
 }
 
 impl AppState {
@@ -79,6 +113,13 @@ impl AppState {
             viewer_tz,
             demo_login,
             contacts_cache: Arc::new(DashMap::new()),
+            ics_subscriptions: Arc::new(DashMap::new()),
+            ics_cache: Arc::new(DashMap::new()),
+            http_client: reqwest::Client::builder()
+                .user_agent("jscalendar-server")
+                .timeout(std::time::Duration::from_secs(15))
+                .build()
+                .unwrap_or_default(),
         }
     }
 }

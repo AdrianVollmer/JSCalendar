@@ -1,0 +1,50 @@
+<div class="modal-backdrop" id="event-dialog-backdrop">
+<dialog class="event-dialog" open aria-label="{% if is_edit %}Edit subscription{% else %}Subscribe to calendar{% endif %}">
+  <form class="event-form"
+    method="post"
+    action="{% if is_edit %}/app/ics/{{ subscription_id }}/edit{% else %}/app/ics{% endif %}"
+    {% if is_edit %}hx-patch="/app/ics/{{ subscription_id }}"{% else %}hx-post="/app/ics"{% endif %}
+    hx-target="#modal-root" hx-swap="innerHTML">
+
+    <header class="event-form-header">
+      <h2>{% if is_edit %}Edit subscription{% else %}Subscribe to calendar{% endif %}</h2>
+      <a class="btn-icon" href="/app?view={{ back_view }}&amp;date={{ back_date }}&amp;cal={{ back_cal }}&amp;q={{ back_q }}" aria-label="Close">✕</a>
+    </header>
+
+    {% if let Some(err) = error %}
+    <p class="form-error" role="alert">{{ err }}</p>
+    {% endif %}
+
+    <input type="hidden" name="back_view" value="{{ back_view }}">
+    <input type="hidden" name="back_date" value="{{ back_date }}">
+    <input type="hidden" name="back_cal" value="{{ back_cal }}">
+    <input type="hidden" name="back_q" value="{{ back_q }}">
+
+    <label class="field">
+      <span>Name</span>
+      <input type="text" name="name" value="{{ name }}" required autofocus placeholder="e.g. Public holidays">
+    </label>
+
+    <div class="field-row">
+      <label class="field field-color">
+        <span>Color</span>
+        <input type="color" name="color" value="{{ color }}">
+      </label>
+      <label class="field">
+        <span>iCal URL</span>
+        <input type="url" name="url" value="{{ url }}" required placeholder="https://example.com/calendar.ics">
+      </label>
+    </div>
+    <p class="field-hint">Read-only — events are fetched from this URL periodically and can't be edited here.</p>
+
+    <footer class="event-form-footer">
+      {% if is_edit %}
+      <button type="submit" formaction="/app/ics/{{ subscription_id }}/delete" formnovalidate hx-delete="/app/ics/{{ subscription_id }}" hx-target="#modal-root" hx-swap="innerHTML" hx-confirm="Remove this subscription?" class="btn btn-danger">Remove</button>
+      {% endif %}
+      <span class="spacer"></span>
+      <a class="btn btn-ghost" href="/app?view={{ back_view }}&amp;date={{ back_date }}&amp;cal={{ back_cal }}&amp;q={{ back_q }}">Cancel</a>
+      <button type="submit" class="btn btn-primary">Save</button>
+    </footer>
+  </form>
+</dialog>
+</div>

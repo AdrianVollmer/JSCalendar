@@ -1,5 +1,6 @@
 mod auth;
 mod error;
+mod ics;
 mod routes;
 mod state;
 mod view;
@@ -70,6 +71,17 @@ async fn main() {
         .route(
             "/app/calendar/{id}",
             patch(routes::calendar_update).delete(routes::calendar_delete_hx),
+        )
+        .route("/app/ics/new", get(routes::ics_new_form))
+        .route("/app/ics", post(routes::ics_create))
+        .route(
+            "/app/ics/{id}/edit",
+            get(routes::ics_edit_form).post(routes::ics_update),
+        )
+        .route("/app/ics/{id}/delete", post(routes::ics_delete_post))
+        .route(
+            "/app/ics/{id}",
+            patch(routes::ics_update).delete(routes::ics_delete_hx),
         )
         // Served at the root so its default scope covers the whole origin.
         .route_service("/sw.js", ServeFile::new(static_dir.join("sw.js")))

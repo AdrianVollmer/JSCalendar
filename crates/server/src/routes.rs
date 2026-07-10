@@ -38,6 +38,7 @@ fn resolve_view_params(
     calendars: &[Calendar],
     today: NaiveDate,
     has_contacts: bool,
+    ics_ids: &[String],
 ) -> ViewParams {
     let view = raw
         .view
@@ -53,6 +54,7 @@ fn resolve_view_params(
     if has_contacts {
         all_calendar_ids.push(view::BIRTHDAY_PSEUDO_ID.to_string());
     }
+    all_calendar_ids.extend(ics_ids.iter().cloned());
     let visible: HashSet<String> = match &raw.cal {
         Some(s) => s
             .split(',')
@@ -68,6 +70,7 @@ fn resolve_view_params(
             if has_contacts {
                 v.insert(view::BIRTHDAY_PSEUDO_ID.to_string());
             }
+            v.extend(ics_ids.iter().cloned());
             v
         }
     };
@@ -170,6 +173,127 @@ async fn fetch_birthdays(
         range_start.date(),
         range_end.date(),
     ))
+}
+
+/// Keyed the same way as `contacts_cache_key`, but against the primary
+/// (calendar) account rather than the contacts account, since ICS
+/// subscriptions overlay onto the main calendar views.
+fn ics_account_key(session: &AuthedSession) -> String {
+    let api_url = session
+        .client
+        .session()
+        .map(|s| s.api_url.clone())
+        .unwrap_or_default();
+    format!("{api_url}#{}", session.account_id)
+}
+
+fn ics_subscriptions_for(
+    state: &AppState,
+    session: &AuthedSession,
+) -> Vec<crate::state::IcsSubscription> {
+    state
+        .ics_subscriptions
+        .get(&ics_account_key(session))
+        .map(|v| v.clone())
+        .unwrap_or_default()
+}
+
+fn ics_subscription_ids(state: &AppState, session: &AuthedSession) -> Vec<String> {
+    ics_subscriptions_for(state, session)
+        .iter()
+        .map(|s| crate::ics::pseudo_calendar_id(&s.id))
+        .collect()
+}
+
+async fn fetch_and_parse_ics(
+    state: &AppState,
+    sub: &crate::state::IcsSubscription,
+) -> Result<Vec<CalendarEvent>, String> {
+    let resp = state
+        .http_client
+        .get(&sub.url)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("HTTP {}", resp.status()));
+    }
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    Ok(crate::ics::parse_events(&text, &sub.id))
+}
+
+/// Fetches + parses a subscription's `.ics` feed, reusing a recent result
+/// (see `state::ICS_CACHE_TTL_SECS`) instead of re-fetching the URL on
+/// every render. A fetch/parse failure keeps serving the last known-good
+/// events rather than blanking the subscription out of the view.
+async fn get_ics_events_cached(
+    state: &AppState,
+    sub: &crate::state::IcsSubscription,
+) -> Vec<CalendarEvent> {
+    let ttl = std::time::Duration::from_secs(crate::state::ICS_CACHE_TTL_SECS);
+    if let Some(entry) = state.ics_cache.get(&sub.id) {
+        if entry.fetched_at.elapsed() < ttl {
+            return entry.events.clone();
+        }
+    }
+    match fetch_and_parse_ics(state, sub).await {
+        Ok(events) => {
+            state.ics_cache.insert(
+                sub.id.clone(),
+                crate::state::CachedIcsEvents {
+                    events: events.clone(),
+                    fetched_at: std::time::Instant::now(),
+                    error: None,
+                },
+            );
+            events
+        }
+        Err(e) => {
+            let stale = state
+                .ics_cache
+                .get(&sub.id)
+                .map(|c| c.events.clone())
+                .unwrap_or_default();
+            state.ics_cache.insert(
+                sub.id.clone(),
+                crate::state::CachedIcsEvents {
+                    events: stale.clone(),
+                    fetched_at: std::time::Instant::now(),
+                    error: Some(e),
+                },
+            );
+            stale
+        }
+    }
+}
+
+async fn fetch_ics_events(
+    state: &AppState,
+    session: &AuthedSession,
+    params: &ViewParams,
+) -> Vec<CalendarEvent> {
+    let subs = ics_subscriptions_for(state, session);
+    let mut events = Vec::new();
+    for sub in &subs {
+        if !params
+            .visible
+            .contains(&crate::ics::pseudo_calendar_id(&sub.id))
+        {
+            continue;
+        }
+        events.extend(get_ics_events_cached(state, sub).await);
+    }
+    events
+}
+
+fn ics_colors_for(
+    state: &AppState,
+    session: &AuthedSession,
+) -> std::collections::HashMap<String, String> {
+    ics_subscriptions_for(state, session)
+        .into_iter()
+        .map(|s| (crate::ics::pseudo_calendar_id(&s.id), s.color))
+        .collect()
 }
 
 #[derive(Template)]
@@ -286,12 +410,15 @@ async fn render_fragment(
         .map_err(|e| AppError::bad_request(format!("template error: {e}")));
     }
 
-    let events = fetch_events(session, state, params).await?;
+    let mut events = fetch_events(session, state, params).await?;
+    events.extend(fetch_ics_events(state, session, params).await);
     let birthdays = fetch_birthdays(state, session, params).await?;
+    let ics_colors = ics_colors_for(state, session);
     let inputs = view::BuildInputs {
         events: &events,
         calendars,
         birthdays: &birthdays,
+        ics_colors: &ics_colors,
         viewer_tz: state.viewer_tz,
         params,
         today,
@@ -345,6 +472,10 @@ struct SidebarCalendarVM {
     visible: bool,
     toggle_href: String,
     edit_href: Option<String>,
+    /// Set when this is an ICS subscription whose last fetch failed —
+    /// shown as a small warning badge so a broken feed URL doesn't fail
+    /// silently.
+    error: Option<String>,
 }
 
 fn sidebar_calendars(
@@ -363,6 +494,7 @@ fn sidebar_calendars(
                 toggle_href: params.toggle_href(&id),
                 edit_href: Some(format!("/app/calendar/{id}/edit?{back_qs}")),
                 name: c.name.clone(),
+                error: None,
                 id,
             })
         })
@@ -376,14 +508,50 @@ fn sidebar_calendars(
             visible: params.visible.contains(view::BIRTHDAY_PSEUDO_ID),
             toggle_href: params.toggle_href(view::BIRTHDAY_PSEUDO_ID),
             edit_href: None,
+            error: None,
         });
     }
+    items
+}
+
+/// Reuses `SidebarCalendarVM` (id/name/color/visible/toggle_href/edit_href
+/// are all it needs) for ICS-subscription rows in the sidebar's
+/// "Subscriptions" section.
+fn sidebar_ics_subscriptions(
+    state: &AppState,
+    subs: &[crate::state::IcsSubscription],
+    params: &ViewParams,
+) -> Vec<SidebarCalendarVM> {
+    let back_qs = params.query_string(params.view, params.date);
+    let mut items: Vec<SidebarCalendarVM> = subs
+        .iter()
+        .map(|s| {
+            let id = crate::ics::pseudo_calendar_id(&s.id);
+            let error = state.ics_cache.get(&s.id).and_then(|c| c.error.clone());
+            SidebarCalendarVM {
+                visible: params.visible.contains(&id),
+                toggle_href: params.toggle_href(&id),
+                edit_href: Some(format!("/app/ics/{}/edit?{back_qs}", s.id)),
+                color: s.color.clone(),
+                name: s.name.clone(),
+                error,
+                id,
+            }
+        })
+        .collect();
+    items.sort_by(|a, b| a.name.cmp(&b.name));
     items
 }
 
 #[derive(Template)]
 #[template(path = "calendar_list.html")]
 struct CalendarListTemplate {
+    calendars: Vec<SidebarCalendarVM>,
+}
+
+#[derive(Template)]
+#[template(path = "calendar_list.html")]
+struct IcsListTemplate {
     calendars: Vec<SidebarCalendarVM>,
 }
 
@@ -416,6 +584,7 @@ struct ShellParts {
     username: String,
     is_dated_view: bool,
     calendars: Vec<SidebarCalendarVM>,
+    ics_subscriptions: Vec<SidebarCalendarVM>,
     view_links: Vec<ViewLink>,
     prev_href: String,
     next_href: String,
@@ -431,6 +600,7 @@ struct AppShellTemplate {
     username: String,
     is_dated_view: bool,
     calendars: Vec<SidebarCalendarVM>,
+    ics_subscriptions: Vec<SidebarCalendarVM>,
     view_links: Vec<ViewLink>,
     prev_href: String,
     next_href: String,
@@ -447,6 +617,7 @@ struct AppInnerTemplate {
     username: String,
     is_dated_view: bool,
     calendars: Vec<SidebarCalendarVM>,
+    ics_subscriptions: Vec<SidebarCalendarVM>,
     view_links: Vec<ViewLink>,
     prev_href: String,
     next_href: String,
@@ -462,6 +633,7 @@ impl ShellParts {
             username: self.username,
             is_dated_view: self.is_dated_view,
             calendars: self.calendars,
+            ics_subscriptions: self.ics_subscriptions,
             view_links: self.view_links,
             prev_href: self.prev_href,
             next_href: self.next_href,
@@ -478,6 +650,7 @@ impl ShellParts {
             username: self.username,
             is_dated_view: self.is_dated_view,
             calendars: self.calendars,
+            ics_subscriptions: self.ics_subscriptions,
             view_links: self.view_links,
             prev_href: self.prev_href,
             next_href: self.next_href,
@@ -502,6 +675,11 @@ async fn build_shell_parts(
         username: session.username.clone(),
         is_dated_view: params.view.is_dated(),
         calendars: sidebar_calendars(calendars, params, has_contacts),
+        ics_subscriptions: sidebar_ics_subscriptions(
+            state,
+            &ics_subscriptions_for(state, session),
+            params,
+        ),
         view_links: view_links(params, has_contacts),
         prev_href: params.nav_href(params.view, params.prev_date()),
         next_href: params.nav_href(params.view, params.next_date()),
@@ -528,6 +706,7 @@ pub async fn app_view(
         &calendars,
         today,
         session.contacts_account_id.is_some(),
+        &ics_subscription_ids(&state, &session),
     );
 
     let parts = build_shell_parts(&session, &state, &calendars, &params, today).await?;
@@ -770,6 +949,7 @@ pub async fn event_new_form(
         &calendars,
         today,
         session.contacts_account_id.is_some(),
+        &ics_subscription_ids(&state, &session),
     );
     let form = blank_form(&calendars, &params, state.viewer_tz, None);
     let modal_html = form
@@ -799,6 +979,7 @@ pub async fn event_edit_form(
         &calendars,
         today,
         session.contacts_account_id.is_some(),
+        &ics_subscription_ids(&state, &session),
     );
     let events = session
         .client
@@ -962,6 +1143,7 @@ async fn mutation_response(
             &calendars,
             today,
             session.contacts_account_id.is_some(),
+            &ics_subscription_ids(state, session),
         );
         let fragment = render_fragment(session, state, &calendars, &params, today).await?;
         let body =
@@ -1060,6 +1242,7 @@ async fn render_form_error(
         &calendars,
         today,
         session.contacts_account_id.is_some(),
+        &ics_subscription_ids(state, session),
     );
     let mut tpl = blank_form(&calendars, &params, state.viewer_tz, Some(message));
     tpl.is_edit = is_edit;
@@ -1255,6 +1438,7 @@ pub async fn contact_new_form(
         &calendars,
         today,
         session.contacts_account_id.is_some(),
+        &ics_subscription_ids(&state, &session),
     );
     let address_books = match &session.contacts_account_id {
         Some(id) => session.client.get_address_books(id).await?,
@@ -1288,6 +1472,7 @@ pub async fn contact_edit_form(
         &calendars,
         today,
         session.contacts_account_id.is_some(),
+        &ics_subscription_ids(&state, &session),
     );
     let contacts_account_id = session
         .contacts_account_id
@@ -1410,6 +1595,7 @@ async fn render_contact_form_error(
         &calendars,
         today,
         session.contacts_account_id.is_some(),
+        &ics_subscription_ids(state, session),
     );
     let address_books = match &session.contacts_account_id {
         Some(id) => session.client.get_address_books(id).await?,
@@ -1631,6 +1817,7 @@ pub async fn calendar_new_form(
         &calendars,
         today,
         session.contacts_account_id.is_some(),
+        &ics_subscription_ids(&state, &session),
     );
     let form = blank_calendar_form(&params, None);
     let modal_html = form
@@ -1660,6 +1847,7 @@ pub async fn calendar_edit_form(
         &calendars,
         today,
         session.contacts_account_id.is_some(),
+        &ics_subscription_ids(&state, &session),
     );
     let calendar = calendars
         .iter()
@@ -1731,6 +1919,7 @@ async fn render_calendar_form_error(
         &calendars,
         today,
         session.contacts_account_id.is_some(),
+        &ics_subscription_ids(state, session),
     );
     let mut tpl = blank_calendar_form(&params, Some(message));
     tpl.is_edit = is_edit;
@@ -1765,7 +1954,13 @@ async fn calendar_mutation_response(
             q: None,
         };
         let has_contacts = session.contacts_account_id.is_some();
-        let params = resolve_view_params(&raw, &calendars, today, has_contacts);
+        let params = resolve_view_params(
+            &raw,
+            &calendars,
+            today,
+            has_contacts,
+            &ics_subscription_ids(state, session),
+        );
         let fragment = render_fragment(session, state, &calendars, &params, today).await?;
         let list_tpl = CalendarListTemplate {
             calendars: sidebar_calendars(&calendars, &params, has_contacts),
@@ -1893,6 +2088,372 @@ async fn calendar_delete_inner(
         .destroy_calendar(&session.account_id, id)
         .await?;
     calendar_mutation_response(
+        state,
+        session,
+        headers,
+        &form.back_view,
+        &form.back_date,
+        &form.back_cal,
+    )
+    .await
+}
+
+// ---- ICS-URL calendar subscriptions --------------------------------------
+
+const DEFAULT_ICS_COLOR: &str = "#0ea5e9";
+
+#[derive(Template)]
+#[template(path = "ics_form.html")]
+struct IcsFormTemplate {
+    is_edit: bool,
+    subscription_id: String,
+    back_view: String,
+    back_date: String,
+    back_cal: String,
+    back_q: String,
+    name: String,
+    color: String,
+    url: String,
+    error: Option<String>,
+}
+
+fn blank_ics_form(params: &ViewParams, error: Option<String>) -> IcsFormTemplate {
+    IcsFormTemplate {
+        is_edit: false,
+        subscription_id: String::new(),
+        back_view: params.view.as_str().to_string(),
+        back_date: params.date.format("%Y-%m-%d").to_string(),
+        back_cal: params.cal_param(),
+        back_q: params.q.clone().unwrap_or_default(),
+        name: String::new(),
+        color: DEFAULT_ICS_COLOR.to_string(),
+        url: String::new(),
+        error,
+    }
+}
+
+fn ics_sub_to_form(
+    sub: &crate::state::IcsSubscription,
+    params: &ViewParams,
+    error: Option<String>,
+) -> IcsFormTemplate {
+    IcsFormTemplate {
+        is_edit: true,
+        subscription_id: sub.id.clone(),
+        back_view: params.view.as_str().to_string(),
+        back_date: params.date.format("%Y-%m-%d").to_string(),
+        back_cal: params.cal_param(),
+        back_q: params.q.clone().unwrap_or_default(),
+        name: sub.name.clone(),
+        color: sub.color.clone(),
+        url: sub.url.clone(),
+        error,
+    }
+}
+
+pub async fn ics_new_form(
+    State(state): State<AppState>,
+    session: AuthedSession,
+    Query(raw): Query<RawViewQuery>,
+    headers: HeaderMap,
+) -> Result<Response, AppError> {
+    let today = today_in(state.viewer_tz);
+    let calendars = session.client.get_calendars(&session.account_id).await?;
+    let params = resolve_view_params(
+        &raw,
+        &calendars,
+        today,
+        session.contacts_account_id.is_some(),
+        &ics_subscription_ids(&state, &session),
+    );
+    let form = blank_ics_form(&params, None);
+    let modal_html = form
+        .render()
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+
+    if is_hx(&headers) {
+        Ok(Html(modal_html).into_response())
+    } else {
+        let parts = build_shell_parts(&session, &state, &calendars, &params, today).await?;
+        let ctx = parts.into_shell(Some(modal_html));
+        Ok(render(&ctx))
+    }
+}
+
+pub async fn ics_edit_form(
+    State(state): State<AppState>,
+    session: AuthedSession,
+    Path(id): Path<String>,
+    Query(raw): Query<RawViewQuery>,
+    headers: HeaderMap,
+) -> Result<Response, AppError> {
+    let today = today_in(state.viewer_tz);
+    let calendars = session.client.get_calendars(&session.account_id).await?;
+    let params = resolve_view_params(
+        &raw,
+        &calendars,
+        today,
+        session.contacts_account_id.is_some(),
+        &ics_subscription_ids(&state, &session),
+    );
+    let sub = ics_subscriptions_for(&state, &session)
+        .into_iter()
+        .find(|s| s.id == id)
+        .ok_or(jmap_client::Error::NotFound)?;
+    let form = ics_sub_to_form(&sub, &params, None);
+    let modal_html = form
+        .render()
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+
+    if is_hx(&headers) {
+        Ok(Html(modal_html).into_response())
+    } else {
+        let parts = build_shell_parts(&session, &state, &calendars, &params, today).await?;
+        let ctx = parts.into_shell(Some(modal_html));
+        Ok(render(&ctx))
+    }
+}
+
+// ---- ICS mutations --------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct IcsFormBody {
+    pub back_view: String,
+    pub back_date: String,
+    pub back_cal: String,
+    #[serde(default)]
+    pub back_q: String,
+    pub name: String,
+    #[serde(default)]
+    pub color: String,
+    pub url: String,
+}
+
+fn validate_ics_form(form: &IcsFormBody) -> Result<(String, String, String), String> {
+    let name = form.name.trim().to_string();
+    if name.is_empty() {
+        return Err("name is required".to_string());
+    }
+    let url = form.url.trim().to_string();
+    let parsed = url::Url::parse(&url).map_err(|_| "not a valid URL".to_string())?;
+    if parsed.scheme() != "http" && parsed.scheme() != "https" {
+        return Err("URL must be http:// or https://".to_string());
+    }
+    let color = if form.color.is_empty() {
+        DEFAULT_ICS_COLOR.to_string()
+    } else {
+        form.color.clone()
+    };
+    Ok((name, color, url))
+}
+
+async fn render_ics_form_error(
+    state: &AppState,
+    session: &AuthedSession,
+    form: &IcsFormBody,
+    is_edit: bool,
+    subscription_id: Option<String>,
+    message: String,
+) -> Result<Response, AppError> {
+    let calendars = session.client.get_calendars(&session.account_id).await?;
+    let today = today_in(state.viewer_tz);
+    let raw = RawViewQuery {
+        view: Some(form.back_view.clone()),
+        date: Some(form.back_date.clone()),
+        cal: Some(form.back_cal.clone()),
+        q: Some(form.back_q.clone()),
+    };
+    let params = resolve_view_params(
+        &raw,
+        &calendars,
+        today,
+        session.contacts_account_id.is_some(),
+        &ics_subscription_ids(state, session),
+    );
+    let mut tpl = blank_ics_form(&params, Some(message));
+    tpl.is_edit = is_edit;
+    tpl.subscription_id = subscription_id.unwrap_or_default();
+    tpl.name = form.name.clone();
+    tpl.color = form.color.clone();
+    tpl.url = form.url.clone();
+    let body = tpl
+        .render()
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+    Ok(Html(body).into_response())
+}
+
+/// Like `calendar_mutation_response`: an ICS subscription create/edit/
+/// delete can change the sidebar's "Subscriptions" list itself, so the htmx
+/// path also OOB-swaps `#ics-subscription-list` alongside the usual `#view`
+/// refresh.
+async fn ics_mutation_response(
+    state: &AppState,
+    session: &AuthedSession,
+    headers: &HeaderMap,
+    back_view: &str,
+    back_date: &str,
+    back_cal: &str,
+) -> Result<Response, AppError> {
+    if is_hx(headers) {
+        let today = today_in(state.viewer_tz);
+        let calendars = session.client.get_calendars(&session.account_id).await?;
+        let raw = RawViewQuery {
+            view: Some(back_view.to_string()),
+            date: Some(back_date.to_string()),
+            cal: Some(back_cal.to_string()),
+            q: None,
+        };
+        let has_contacts = session.contacts_account_id.is_some();
+        let ics_ids = ics_subscription_ids(state, session);
+        let params = resolve_view_params(&raw, &calendars, today, has_contacts, &ics_ids);
+        let fragment = render_fragment(session, state, &calendars, &params, today).await?;
+        let list_tpl = IcsListTemplate {
+            calendars: sidebar_ics_subscriptions(
+                state,
+                &ics_subscriptions_for(state, session),
+                &params,
+            ),
+        };
+        let list_html = list_tpl
+            .render()
+            .map_err(|e| AppError::bad_request(e.to_string()))?;
+        let body = format!(
+            r#"<div id="view" class="view-container" hx-swap-oob="true">{fragment}</div><ul id="ics-subscription-list" class="calendar-list" hx-swap-oob="true">{list_html}</ul>"#
+        );
+        Ok(Html(body).into_response())
+    } else {
+        Ok(Redirect::to(&format!(
+            "/app?view={back_view}&date={back_date}&cal={back_cal}"
+        ))
+        .into_response())
+    }
+}
+
+pub async fn ics_create(
+    State(state): State<AppState>,
+    session: AuthedSession,
+    headers: HeaderMap,
+    Form(form): Form<IcsFormBody>,
+) -> Result<Response, AppError> {
+    let (name, color, url) = match validate_ics_form(&form) {
+        Ok(v) => v,
+        Err(msg) => return render_ics_form_error(&state, &session, &form, false, None, msg).await,
+    };
+    let sub = crate::state::IcsSubscription {
+        id: Uuid::new_v4().to_string(),
+        name,
+        color,
+        url,
+    };
+    let account_key = ics_account_key(&session);
+    let new_id = sub.id.clone();
+    state
+        .ics_subscriptions
+        .entry(account_key)
+        .or_default()
+        .push(sub);
+
+    let mut back_cal = form.back_cal.clone();
+    let pseudo_id = crate::ics::pseudo_calendar_id(&new_id);
+    if !back_cal.split(',').any(|p| p == pseudo_id) {
+        if !back_cal.is_empty() {
+            back_cal.push(',');
+        }
+        back_cal.push_str(&pseudo_id);
+    }
+
+    ics_mutation_response(
+        &state,
+        &session,
+        &headers,
+        &form.back_view,
+        &form.back_date,
+        &back_cal,
+    )
+    .await
+}
+
+pub async fn ics_update(
+    State(state): State<AppState>,
+    session: AuthedSession,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Form(form): Form<IcsFormBody>,
+) -> Result<Response, AppError> {
+    let (name, color, url) = match validate_ics_form(&form) {
+        Ok(v) => v,
+        Err(msg) => {
+            return render_ics_form_error(&state, &session, &form, true, Some(id), msg).await
+        }
+    };
+    let account_key = ics_account_key(&session);
+    let mut found = false;
+    if let Some(mut subs) = state.ics_subscriptions.get_mut(&account_key) {
+        if let Some(sub) = subs.iter_mut().find(|s| s.id == id) {
+            sub.name = name;
+            sub.color = color;
+            sub.url = url;
+            found = true;
+        }
+    }
+    if !found {
+        return Err(jmap_client::Error::NotFound.into());
+    }
+    // The feed URL may have changed — drop the cached parse so the new URL
+    // is fetched on the next render instead of waiting out the TTL.
+    state.ics_cache.remove(&id);
+
+    ics_mutation_response(
+        &state,
+        &session,
+        &headers,
+        &form.back_view,
+        &form.back_date,
+        &form.back_cal,
+    )
+    .await
+}
+
+#[derive(Debug, Deserialize)]
+pub struct IcsDeleteFormBody {
+    pub back_view: String,
+    pub back_date: String,
+    pub back_cal: String,
+}
+
+pub async fn ics_delete_hx(
+    State(state): State<AppState>,
+    session: AuthedSession,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Query(form): Query<IcsDeleteFormBody>,
+) -> Result<Response, AppError> {
+    ics_delete_inner(&state, &session, &id, &headers, &form).await
+}
+
+pub async fn ics_delete_post(
+    State(state): State<AppState>,
+    session: AuthedSession,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Form(form): Form<IcsDeleteFormBody>,
+) -> Result<Response, AppError> {
+    ics_delete_inner(&state, &session, &id, &headers, &form).await
+}
+
+async fn ics_delete_inner(
+    state: &AppState,
+    session: &AuthedSession,
+    id: &str,
+    headers: &HeaderMap,
+    form: &IcsDeleteFormBody,
+) -> Result<Response, AppError> {
+    let account_key = ics_account_key(session);
+    if let Some(mut subs) = state.ics_subscriptions.get_mut(&account_key) {
+        subs.retain(|s| s.id != id);
+    }
+    state.ics_cache.remove(id);
+    ics_mutation_response(
         state,
         session,
         headers,

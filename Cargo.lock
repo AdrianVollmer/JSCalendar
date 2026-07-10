@@ -895,6 +895,7 @@ dependencies = [
  "chrono-tz",
  "dashmap",
  "jmap-client",
+ "reqwest",
  "serde",
  "serde_json",
  "tokio",
