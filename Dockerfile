@@ -19,11 +19,14 @@ RUN apt-get update \
 WORKDIR /app
 COPY --from=builder /build/target/release/jscalendar-server /app/jscalendar-server
 COPY crates/server/static /app/static
+RUN mkdir -p /app/data && chown jscalendar:jscalendar /app/data
 
 ENV JSCAL_STATIC_DIR=/app/static \
+    JSCAL_DATA_DIR=/app/data \
     PORT=8787 \
     JSCAL_TIMEZONE=UTC
 EXPOSE 8787
 USER jscalendar
+VOLUME /app/data
 
 ENTRYPOINT ["/app/jscalendar-server"]

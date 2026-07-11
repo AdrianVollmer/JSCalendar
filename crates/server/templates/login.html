@@ -7,29 +7,18 @@
       <img src="/static/icons/icon.svg" alt="" width="40" height="40">
       <h1>JSCalendar</h1>
     </div>
-    <p class="login-sub">Sign in with your JMAP account</p>
+    <p class="login-sub">Sign in to your account</p>
     {% if let Some(err) = error %}
     <p class="login-error" role="alert">{{ err }}</p>
     {% endif %}
     <label>
-      <span>Server</span>
-      <input type="text" name="server_url" placeholder="mail.example.com" value="{{ server_url }}" required autofocus autocapitalize="off" autocorrect="off">
-    </label>
-    <label>
       <span>Username</span>
-      <input type="text" name="username" placeholder="you@example.com" value="{{ username }}" autocapitalize="off" autocorrect="off">
+      <input type="text" name="username" value="{{ username }}" required autofocus autocapitalize="off" autocorrect="off">
     </label>
     <label>
       <span>Password</span>
-      <input type="password" name="password" placeholder="••••••••" value="{{ password }}" autocomplete="current-password">
+      <input type="password" name="password" placeholder="••••••••" value="{{ password }}" autocomplete="current-password" required>
     </label>
-    <details class="login-advanced">
-      <summary>Use an API token instead</summary>
-      <label>
-        <span>Bearer token</span>
-        <input type="text" name="token" placeholder="leave username/password empty">
-      </label>
-    </details>
     <button type="submit" class="btn btn-primary btn-block">Sign in</button>
   </form>
 </main>

@@ -1,70 +1,38 @@
-use std::sync::{Arc, RwLock};
+use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Instant;
 
 use dashmap::DashMap;
-use jmap_client::client::Credentials;
 use jmap_client::jscalendar::CalendarEvent;
 use jmap_client::jscontact::Card;
 use jmap_client::tz::Tz;
 use jmap_client::Client;
 
+use crate::users::UserStore;
+
+/// A connected JMAP client cached per app user (see `AppState::jmap_clients`),
+/// established lazily from that user's stored `JmapSettings` and reused
+/// across every request/session for as long as it's valid.
 #[derive(Clone)]
 pub struct UserSession {
     pub client: Client,
     pub account_id: String,
-    pub username: String,
     /// `None` when the JMAP server doesn't advertise Contacts support —
     /// birthdays and the contacts list are simply hidden in that case.
     pub contacts_account_id: Option<String>,
-}
-
-/// Configuration for transparently authenticating every visitor who
-/// doesn't already have their own session, instead of showing the login
-/// page — for single-tenant deployments where the operator supplies the
-/// one JMAP account up front (`JSCAL_SERVER_URL` + `JSCAL_USERNAME`/
-/// `JSCAL_PASSWORD` or `JSCAL_TOKEN`).
-#[derive(Clone)]
-pub struct AutoLoginConfig {
-    pub server_url: String,
-    pub credentials: Credentials,
 }
 
 /// Reads `var`, preferring `{var}_FILE` (a path to a file holding the
 /// value) when set. This is the safer option for containers/orchestrators:
 /// a mounted secret file isn't visible in `docker inspect`, `ps`, or
 /// `/proc/[pid]/environ` the way a plain environment variable is.
-fn read_secret(var: &str) -> Option<String> {
+pub(crate) fn read_secret(var: &str) -> Option<String> {
     if let Ok(path) = std::env::var(format!("{var}_FILE")) {
         return std::fs::read_to_string(&path)
             .map(|s| s.trim().to_string())
             .ok();
     }
     std::env::var(var).ok()
-}
-
-fn read_auto_login() -> Option<AutoLoginConfig> {
-    let server_url = std::env::var("JSCAL_SERVER_URL").ok()?;
-    let token = read_secret("JSCAL_TOKEN").filter(|t| !t.is_empty());
-    let credentials = if let Some(token) = token {
-        Credentials::Bearer(token)
-    } else {
-        let username = std::env::var("JSCAL_USERNAME").ok();
-        let password = read_secret("JSCAL_PASSWORD");
-        match (username, password) {
-            (Some(username), Some(password)) => Credentials::Basic { username, password },
-            _ => {
-                tracing::warn!(
-                    "JSCAL_SERVER_URL is set but neither JSCAL_TOKEN nor \
-                     JSCAL_USERNAME+JSCAL_PASSWORD are — auto-login disabled"
-                );
-                return None;
-            }
-        }
-    };
-    Some(AutoLoginConfig {
-        server_url,
-        credentials,
-    })
 }
 
 /// How long a fetched contact list is trusted before re-fetching. There's
@@ -83,9 +51,8 @@ pub struct CachedContacts {
 
 /// A subscribed read-only calendar sourced from an external `.ics` URL.
 /// Not a real JMAP calendar — there's no upstream server to store this on,
-/// so (matching this app's "no persistence by design" stance for anything
-/// that isn't the JMAP server's own data) the subscription list lives only
-/// in memory and is lost on restart.
+/// so (unlike user accounts, which now do persist) the subscription list
+/// lives only in memory and is lost on restart.
 #[derive(Debug, Clone)]
 pub struct IcsSubscription {
     pub id: String,
@@ -180,23 +147,28 @@ impl TimeFormat {
     }
 }
 
-/// Pre-fills the login form so a demo/test instance (e.g. wired up to
-/// `mock-jmap-server`) needs zero typing to sign in. Only set via
-/// `JSCAL_DEMO_SERVER_URL` — there's no default, so a normal deployment's
-/// login page stays blank.
+/// Pre-fills the login form's username/password when `JSCAL_ADMIN_PASSWORD`
+/// is set, so a demo/test instance needs zero typing to sign in as the
+/// bootstrap admin. There's no default, so a normal deployment's login page
+/// stays blank.
 #[derive(Clone)]
 pub struct DemoLogin {
-    pub server_url: String,
     pub username: String,
     pub password: String,
 }
 
-/// Shared server state: an in-memory table of logged-in sessions, keyed by
-/// an opaque cookie value. There is no persistence by design — restarting
-/// the server simply signs everyone out, and credentials never touch disk.
+/// Shared server state. User accounts and sessions persist to disk (see
+/// `crate::users`); everything else here (JMAP data caches, ICS
+/// subscriptions) stays in-memory and is lost on restart, since it's
+/// either cheap to re-fetch from the JMAP server or, for ICS subscriptions,
+/// already documented as ephemeral.
 #[derive(Clone)]
 pub struct AppState {
-    pub sessions: Arc<DashMap<String, UserSession>>,
+    pub users: Arc<UserStore>,
+    /// A connected JMAP client per app user, keyed by user id and
+    /// established lazily from that user's stored `JmapSettings`. Removed
+    /// (forcing a reconnect) whenever a user's JMAP settings change.
+    pub jmap_clients: Arc<DashMap<String, UserSession>>,
     /// The IANA zone all views are rendered in (`JSCAL_TIMEZONE` env var,
     /// default UTC). JSCalendar events carry their own zone; this is only
     /// the *display* zone since a single-user server has no per-request
@@ -217,13 +189,6 @@ pub struct AppState {
     /// env var), or `None` to not offer a holidays pseudo-calendar at all.
     pub holidays_region: Option<holiday_de::GermanRegion>,
     pub time_format: TimeFormat,
-    /// Set from `JSCAL_SERVER_URL` + credentials; when present, visitors
-    /// without their own session cookie are transparently authenticated
-    /// using it instead of being shown the login page.
-    pub auto_login: Option<AutoLoginConfig>,
-    /// The shared session established from `auto_login`, connected lazily
-    /// on first use and reused by every cookie-less visitor after that.
-    pub auto_session: Arc<RwLock<Option<UserSession>>>,
 }
 
 impl AppState {
@@ -232,15 +197,6 @@ impl AppState {
             .ok()
             .and_then(|s| jmap_client::tz::parse_tz(&s))
             .unwrap_or(Tz::UTC);
-        let demo_login = std::env::var("JSCAL_DEMO_SERVER_URL")
-            .ok()
-            .map(|server_url| DemoLogin {
-                server_url,
-                username: std::env::var("JSCAL_DEMO_USERNAME")
-                    .unwrap_or_else(|_| "demo".to_string()),
-                password: std::env::var("JSCAL_DEMO_PASSWORD")
-                    .unwrap_or_else(|_| "demo".to_string()),
-            });
         let holidays_region = std::env::var("JSCAL_HOLIDAYS_REGION")
             .ok()
             .and_then(|s| parse_german_region(&s));
@@ -248,9 +204,18 @@ impl AppState {
             .ok()
             .and_then(|s| TimeFormat::parse(&s))
             .unwrap_or_default();
-        let auto_login = read_auto_login();
+
+        let data_dir = std::env::var("JSCAL_DATA_DIR").unwrap_or_else(|_| "./data".to_string());
+        let users = Arc::new(UserStore::load(PathBuf::from(data_dir).join("users.json")));
+        crate::users::ensure_bootstrap_admin(&users);
+        let demo_login = read_secret("JSCAL_ADMIN_PASSWORD").map(|password| DemoLogin {
+            username: crate::users::BOOTSTRAP_ADMIN_USERNAME.to_string(),
+            password,
+        });
+
         Self {
-            sessions: Arc::new(DashMap::new()),
+            users,
+            jmap_clients: Arc::new(DashMap::new()),
             viewer_tz,
             demo_login,
             contacts_cache: Arc::new(DashMap::new()),
@@ -263,8 +228,6 @@ impl AppState {
                 .unwrap_or_default(),
             holidays_region,
             time_format,
-            auto_login,
-            auto_session: Arc::new(RwLock::new(None)),
         }
     }
 }

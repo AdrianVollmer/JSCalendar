@@ -25,9 +25,12 @@ month/week/day/agenda views, plus [JSContact](https://www.rfc-editor.org/rfc/rfc
   navigate normally); htmx just intercepts the same links/forms to swap
   content in place instead of doing a full page reload.
 
-Credentials are never exposed to the browser: the server holds one JMAP
-`Client` per logged-in session (in memory, keyed by an opaque session
-cookie) and the browser only ever talks to the server.
+Each app account has its own JMAP connection settings (server URL plus
+username/password or a bearer token), configured from that account's own
+Settings page rather than typed in at login. JMAP credentials are never
+exposed to the browser: the server holds one JMAP `Client` per app user,
+connected lazily and cached in memory, and the browser only ever talks to
+the server.
 
 ## Running it
 
@@ -42,49 +45,56 @@ Environment variables:
 | `PORT`              | `8787`                            | HTTP port to listen on                                               |
 | `JSCAL_TIMEZONE`    | `UTC`                             | IANA zone views are rendered in (e.g. `Europe/Berlin`)               |
 | `JSCAL_STATIC_DIR`  | `crates/server/static`            | Where to serve `/static/*` and `/sw.js` from                         |
-| `JSCAL_DEMO_SERVER_URL` | unset                         | If set, pre-fills the login form's server URL (see below)            |
-| `JSCAL_DEMO_USERNAME`   | `demo`                        | Pre-filled username, only used when `JSCAL_DEMO_SERVER_URL` is set   |
-| `JSCAL_DEMO_PASSWORD`   | `demo`                        | Pre-filled password, only used when `JSCAL_DEMO_SERVER_URL` is set   |
+| `JSCAL_DATA_DIR`    | `./data`                          | Where `users.json` (accounts + sessions) is stored (see "User management" below) |
+| `JSCAL_ADMIN_PASSWORD`, `JSCAL_ADMIN_PASSWORD_FILE` | unset        | Sets/resets the built-in `admin` account's password on every startup; `_FILE` reads it from a mounted file instead (see below) |
+| `JSCAL_DEMO_SERVER_URL` | unset                         | If set, seeds the built-in admin's calendar connection on first startup (see below) |
+| `JSCAL_DEMO_USERNAME`   | `demo`                        | Seed JMAP username, only used when `JSCAL_DEMO_SERVER_URL` is set   |
+| `JSCAL_DEMO_PASSWORD`   | `demo`                        | Seed JMAP password, only used when `JSCAL_DEMO_SERVER_URL` is set   |
 | `JSCAL_HOLIDAYS_REGION` | unset                         | German federal state to show a "Public Holidays" pseudo-calendar for (see below); unset means the feature doesn't appear at all |
-| `JSCAL_TIME_FORMAT` | `12h`                             | Clock style for event/hour times: `12h` or `24h`. All four of these are also overridable per-browser from the in-app Settings page |
-| `JSCAL_SERVER_URL`  | unset                             | JMAP server to auto-connect every visitor to, skipping the login page entirely (see below) |
-| `JSCAL_USERNAME`    | unset                             | Username for `JSCAL_SERVER_URL`, used with `JSCAL_PASSWORD`/`JSCAL_PASSWORD_FILE` |
-| `JSCAL_PASSWORD`, `JSCAL_PASSWORD_FILE` | unset            | Password for `JSCAL_USERNAME`; `_FILE` reads it from a mounted file instead (see below) |
-| `JSCAL_TOKEN`, `JSCAL_TOKEN_FILE`       | unset            | Bearer token for `JSCAL_SERVER_URL`, tried before username/password if both are set; `_FILE` reads it from a mounted file |
+| `JSCAL_TIME_FORMAT` | `12h`                             | Clock style for event/hour times: `12h` or `24h`. Both of these are also overridable per-browser from the in-app Settings page |
 
-### Auto-login (single-tenant deployments)
+## User management
 
-Setting `JSCAL_SERVER_URL` plus either `JSCAL_TOKEN`(`_FILE`) or
-`JSCAL_USERNAME`/`JSCAL_PASSWORD`(`_FILE`) makes the server transparently
-authenticate every visitor who doesn't already have their own session,
-instead of showing the login page. It's meant for a personal deployment
-where there's only one JMAP account and typing credentials into a form (or
-even seeing a login screen) is pure friction. The connection is
-established once and its `Client` is shared by every visitor after that;
-the `/login` page still works if you ever want to sign in as a different
-account manually, and "Sign out" drops the cached auto-login connection,
-forcing a fresh reconnect on the next visit (useful after rotating
-credentials).
+There are two roles: `admin` and `user`. Admins can create, edit, and
+delete accounts (including other admins) from `/admin/users`, linked from
+the sidebar footer. Each account carries its own JMAP connection settings
+(server URL plus username/password or a bearer token), set from that
+account's own Settings page, plus its own app password, hashed with
+[argon2](https://crates.io/crates/argon2) and never stored in recoverable
+form.
 
-This is a different mechanism from `JSCAL_DEMO_*` above, which only
-pre-fills the login *form* for a human to still submit. That one exists
-for the `make demo` mock-server target and intentionally never bypasses
-the login step.
+Accounts and sessions persist to `JSCAL_DATA_DIR/users.json` (mode `0600`)
+so they survive a restart, and a signed-in session lasts effectively
+forever (a ten-year cookie) until you explicitly sign out or an admin
+deletes the account. This is a deliberate departure from the rest of the
+app's "nothing persists to disk" design: real user accounts need to still
+exist tomorrow for "an admin creates accounts" to mean anything.
 
-For the credential itself, prefer the `_FILE` variant
-(`JSCAL_PASSWORD_FILE=/run/secrets/jscal_password`, pointing at a Docker/
-Podman/Kubernetes secret mount) over the plain env var: a mounted file
-isn't visible in `docker inspect`, `ps`, or `/proc/[pid]/environ` the way
-process environment variables are. If you can't use a secrets mount, the
-plain `JSCAL_PASSWORD`/`JSCAL_TOKEN` env vars still work, but treat that
-container/host the way you'd treat any other place holding a plaintext
-credential (restricted `EnvironmentFile=` permissions for systemd, no
-committing the value to a compose file that lands in version control,
-etc.).
+A built-in `admin` account is created automatically on first startup, with
+a random password logged once (grep the startup log for `created 'admin'`)
+if `JSCAL_ADMIN_PASSWORD`(`_FILE`) isn't set. Setting that variable resets
+the `admin` account's password to it on every startup, which doubles as
+both initial provisioning (set it once, log in, then unset it) and
+emergency lockout recovery (set it again any time you need back in). When
+`JSCAL_DEMO_SERVER_URL`/`JSCAL_DEMO_USERNAME`/`JSCAL_DEMO_PASSWORD` are
+also set, they seed the built-in admin's calendar connection the first
+time it's created, so `make demo` (see below) still logs straight into a
+working calendar.
 
-Then open `http://localhost:8787`, sign in with your JMAP server's URL (or
-just its hostname; `/.well-known/jmap` is appended automatically),
-username/password, or an API token.
+For the admin-password override, prefer the `_FILE` variant
+(`JSCAL_ADMIN_PASSWORD_FILE=/run/secrets/jscal_admin_password`, pointing
+at a Docker/Podman/Kubernetes secret mount) over the plain env var: a
+mounted file isn't visible in `docker inspect`, `ps`, or
+`/proc/[pid]/environ` the way process environment variables are. The same
+goes for each account's JMAP password/token, which is stored on disk in
+recoverable form (not hashed) since the server has to present it to the
+JMAP server on that account's behalf; treat `JSCAL_DATA_DIR` the way you'd
+treat any other place holding plaintext credentials.
+
+Then open `http://localhost:8787`, sign in, and (for a new account) fill
+in your JMAP server's URL (or just its hostname;
+`/.well-known/jmap` is appended automatically), username/password, or an
+API token from the Settings page.
 
 ## Trying it without a JMAP account
 
@@ -151,9 +161,9 @@ it manually instead.
   (separate from the real "Calendars" section) lets you add any public
   `.ics` URL as a read-only overlay calendar, with its own name/color and
   the same visibility toggle as everything else. These aren't JMAP
-  calendars, since the app has no database of its own, so subscriptions
-  live only in memory for the running server process (lost on restart,
-  same as login sessions). Each feed is fetched and parsed on demand and
+  calendars, so subscriptions live only in memory for the running server
+  process (lost on restart, unlike accounts and sessions, which persist to
+  disk). Each feed is fetched and parsed on demand and
   cached for `ICS_CACHE_TTL_SECS` (30 minutes) before being re-fetched, and
   a small ⚠ badge appears next to a subscription if its last fetch failed.
   The parser (`server/src/ics.rs`) covers `SUMMARY`/`DTSTART`/`DTEND`/
@@ -179,19 +189,18 @@ it manually instead.
   the saved values into `localStorage`, so they can restore the form if the
   cookie is ever cleared independently; the cookie remains the source of
   truth for what's actually rendered.
-- Auto-login (`JSCAL_SERVER_URL` + credentials, see "Running it" above):
-  skips the login page entirely for single-tenant deployments, with the
-  password/token preferably supplied via a mounted secret file
-  (`JSCAL_PASSWORD_FILE`) rather than a plaintext environment variable.
+- User management (see "User management" above): `admin`/`user` roles, an
+  admin UI to create/edit/delete accounts, a built-in bootstrap admin
+  account, and per-account JMAP connection settings configured from the
+  Settings page instead of typed in at login. Accounts and sessions persist
+  to disk; a signed-in session lasts until explicit sign-out.
 
 ## Known limitations
 
-- Auto-login is genuinely single-tenant: every cookie-less visitor shares
-  the one connection established from `JSCAL_SERVER_URL`, with no
-  per-visitor identity or isolation. It's meant for "just me, on my own
-  network/VPN," not for putting a shared calendar in front of multiple
-  people who should see different accounts; use the normal login flow
-  (or your own auth in front of the app) for that.
+- Each account's JMAP password/token is stored on disk in recoverable
+  form (not hashed), since the server has to present it to the JMAP
+  server on that account's behalf; see "User management" above for the
+  trust boundary this implies for `JSCAL_DATA_DIR`.
 - The event editor only builds simple recurrence rules (a single frequency,
   interval, and end condition); it doesn't expose `byDay` weekday pickers or
   "nth weekday" UI, though events created elsewhere that use those are

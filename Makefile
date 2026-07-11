@@ -86,7 +86,8 @@ mock-server:
 
 ## Runs the mock JMAP server in the background and the app in the
 ## foreground, with the login form pre-filled so signing in is one click.
-## Ctrl-C stops both.
+## Uses a throwaway data dir so repeated demo runs start from a clean
+## built-in admin account. Ctrl-C stops both.
 demo:
 	@trap 'kill 0' EXIT INT TERM; \
 	PORT=$(MOCK_PORT) BIND_ADDR=127.0.0.1 cargo run -p mock-jmap-server & \
@@ -95,6 +96,8 @@ demo:
 	JSCAL_DEMO_SERVER_URL=http://127.0.0.1:$(MOCK_PORT) \
 	JSCAL_DEMO_USERNAME=demo \
 	JSCAL_DEMO_PASSWORD=demo \
+	JSCAL_ADMIN_PASSWORD=admin \
+	JSCAL_DATA_DIR=$$(mktemp -d) \
 	PORT=$(PORT) cargo run -p jscalendar-server
 
 clean:

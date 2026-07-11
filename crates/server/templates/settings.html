@@ -40,6 +40,43 @@
       </select>
     </label>
 
+    <h2 class="settings-section-title">Calendar connection</h2>
+    <p class="login-sub">The JMAP server this account's calendars, events, and contacts are stored on.</p>
+
+    <label class="field">
+      <span>Server</span>
+      <input type="text" name="jmap_server_url" placeholder="mail.example.com" value="{{ jmap_server_url }}" autocapitalize="off" autocorrect="off">
+    </label>
+    <label class="field">
+      <span>Username</span>
+      <input type="text" name="jmap_username" placeholder="you@example.com" value="{{ jmap_username }}" autocapitalize="off" autocorrect="off">
+    </label>
+    <label class="field">
+      <span>Password</span>
+      <input type="password" name="jmap_password" placeholder="••••••••" value="{{ jmap_password }}" autocomplete="off">
+    </label>
+    <details class="login-advanced">
+      <summary>Use an API token instead</summary>
+      <label class="field">
+        <span>Bearer token</span>
+        <input type="text" name="jmap_token" placeholder="leave username/password empty" value="{{ jmap_token }}">
+      </label>
+    </details>
+
+    <h2 class="settings-section-title">Password</h2>
+    {% if let Some(err) = password_error %}
+    <p class="login-error" role="alert">{{ err }}</p>
+    {% endif %}
+    <p class="login-sub">Leave blank to keep your current password.</p>
+    <label class="field">
+      <span>New password</span>
+      <input type="password" name="new_password" placeholder="••••••••" autocomplete="new-password">
+    </label>
+    <label class="field">
+      <span>Confirm new password</span>
+      <input type="password" name="new_password_confirm" placeholder="••••••••" autocomplete="new-password">
+    </label>
+
     <div class="settings-actions">
       <a class="btn btn-ghost" href="/app">Back to calendar</a>
       <button type="submit" class="btn btn-primary">Save</button>

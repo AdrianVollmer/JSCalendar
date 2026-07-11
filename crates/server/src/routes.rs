@@ -15,7 +15,7 @@ use jmap_client::tz::Tz;
 use serde::Deserialize;
 use uuid::Uuid;
 
-use crate::auth::AuthedSession;
+use crate::auth::{AppUser, AuthedSession};
 use crate::error::AppError;
 use crate::state::AppState;
 use crate::view::{self, ViewKind, ViewParams};
@@ -623,6 +623,7 @@ fn view_links(params: &ViewParams, has_contacts: bool) -> Vec<ViewLink> {
 struct ShellParts {
     title: String,
     username: String,
+    is_admin: bool,
     is_dated_view: bool,
     calendars: Vec<SidebarCalendarVM>,
     ics_subscriptions: Vec<SidebarCalendarVM>,
@@ -639,6 +640,7 @@ struct ShellParts {
 struct AppShellTemplate {
     title: String,
     username: String,
+    is_admin: bool,
     is_dated_view: bool,
     calendars: Vec<SidebarCalendarVM>,
     ics_subscriptions: Vec<SidebarCalendarVM>,
@@ -656,6 +658,7 @@ struct AppShellTemplate {
 struct AppInnerTemplate {
     title: String,
     username: String,
+    is_admin: bool,
     is_dated_view: bool,
     calendars: Vec<SidebarCalendarVM>,
     ics_subscriptions: Vec<SidebarCalendarVM>,
@@ -672,6 +675,7 @@ impl ShellParts {
         AppShellTemplate {
             title: self.title,
             username: self.username,
+            is_admin: self.is_admin,
             is_dated_view: self.is_dated_view,
             calendars: self.calendars,
             ics_subscriptions: self.ics_subscriptions,
@@ -689,6 +693,7 @@ impl ShellParts {
         AppInnerTemplate {
             title: self.title,
             username: self.username,
+            is_admin: self.is_admin,
             is_dated_view: self.is_dated_view,
             calendars: self.calendars,
             ics_subscriptions: self.ics_subscriptions,
@@ -713,7 +718,8 @@ async fn build_shell_parts(
     let body = render_fragment(session, state, calendars, params, today).await?;
     Ok(ShellParts {
         title: params.title(today),
-        username: session.username.clone(),
+        username: session.app_username.clone(),
+        is_admin: session.role == crate::users::Role::Admin,
         is_dated_view: params.view.is_dated(),
         calendars: sidebar_calendars(
             calendars,
@@ -2691,6 +2697,11 @@ struct SettingsTemplate {
     /// this to decide whether it's safe to prefill the form from
     /// `localStorage` instead.
     has_override: bool,
+    jmap_server_url: String,
+    jmap_username: String,
+    jmap_password: String,
+    jmap_token: String,
+    password_error: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -2701,7 +2712,7 @@ pub struct SettingsQuery {
 
 pub async fn settings_form(
     State(state): State<AppState>,
-    _session: AuthedSession,
+    user: AppUser,
     headers: HeaderMap,
     Query(q): Query<SettingsQuery>,
 ) -> Response {
@@ -2717,6 +2728,11 @@ pub async fn settings_form(
     let time_format = prefs
         .time_format
         .map(|f| f.as_str().to_string())
+        .unwrap_or_default();
+    let jmap = state
+        .users
+        .get_user(&user.user_id)
+        .map(|u| u.jmap)
         .unwrap_or_default();
     render(&SettingsTemplate {
         timezones: display_tz_options(&timezone),
@@ -2740,6 +2756,11 @@ pub async fn settings_form(
         },
         saved: q.saved,
         has_override,
+        jmap_server_url: jmap.server_url,
+        jmap_username: jmap.username,
+        jmap_password: jmap.password,
+        jmap_token: jmap.token,
+        password_error: None,
     })
     .into_response()
 }
@@ -2752,13 +2773,53 @@ pub struct SettingsFormBody {
     pub holidays_region: String,
     #[serde(default)]
     pub time_format: String,
+    #[serde(default)]
+    pub jmap_server_url: String,
+    #[serde(default)]
+    pub jmap_username: String,
+    #[serde(default)]
+    pub jmap_password: String,
+    #[serde(default)]
+    pub jmap_token: String,
+    #[serde(default)]
+    pub new_password: String,
+    #[serde(default)]
+    pub new_password_confirm: String,
 }
 
 pub async fn settings_save(
-    _session: AuthedSession,
+    State(state): State<AppState>,
+    user: AppUser,
     headers: HeaderMap,
     Form(form): Form<SettingsFormBody>,
 ) -> Response {
+    if !form.new_password.is_empty() || !form.new_password_confirm.is_empty() {
+        if form.new_password != form.new_password_confirm {
+            return password_change_error(&state, &user, &headers, "Passwords do not match.");
+        }
+        if form.new_password.len() < 8 {
+            return password_change_error(
+                &state,
+                &user,
+                &headers,
+                "Password must be at least 8 characters.",
+            );
+        }
+        let hash = crate::users::hash_password(&form.new_password);
+        state
+            .users
+            .update_user(&user.user_id, |u| u.password_hash = hash);
+    }
+
+    let jmap = crate::users::JmapSettings {
+        server_url: form.jmap_server_url.trim().to_string(),
+        username: form.jmap_username.trim().to_string(),
+        password: form.jmap_password,
+        token: form.jmap_token.trim().to_string(),
+    };
+    state.users.update_user(&user.user_id, |u| u.jmap = jmap);
+    state.jmap_clients.remove(&user.user_id);
+
     let value = crate::prefs::encode(&form.timezone, &form.holidays_region, &form.time_format);
     let mut cookie = axum_extra::extract::cookie::Cookie::new(crate::prefs::PREFS_COOKIE, value);
     cookie.set_path("/");
@@ -2770,4 +2831,59 @@ pub async fn settings_save(
         crate::webutil::redirect("/app/settings?saved=true", &headers),
     )
         .into_response()
+}
+
+fn password_change_error(
+    state: &AppState,
+    user: &AppUser,
+    headers: &HeaderMap,
+    msg: &str,
+) -> Response {
+    let prefs = crate::prefs::UserPrefs::from_headers(headers);
+    let has_override =
+        prefs.timezone.is_some() || prefs.holidays_region.is_some() || prefs.time_format.is_some();
+    let timezone = prefs.timezone.map(|tz| tz.to_string()).unwrap_or_default();
+    let holidays_region = match prefs.holidays_region {
+        None => String::new(),
+        Some(None) => "none".to_string(),
+        Some(Some(region)) => crate::state::german_region_name(region).to_string(),
+    };
+    let time_format = prefs
+        .time_format
+        .map(|f| f.as_str().to_string())
+        .unwrap_or_default();
+    let jmap = state
+        .users
+        .get_user(&user.user_id)
+        .map(|u| u.jmap)
+        .unwrap_or_default();
+    render(&SettingsTemplate {
+        timezones: display_tz_options(&timezone),
+        holiday_regions: holiday_region_options(&holidays_region),
+        time_formats: time_format_options(&time_format),
+        server_default_timezone: state.viewer_tz.to_string(),
+        server_default_holidays: state
+            .holidays_region
+            .map(crate::state::german_region_name)
+            .map(|name| {
+                GERMAN_REGION_LABELS
+                    .iter()
+                    .find(|(n, _)| *n == name)
+                    .map(|(_, label)| label.to_string())
+                    .unwrap_or_else(|| name.to_string())
+            })
+            .unwrap_or_else(|| "None".to_string()),
+        server_default_time_format: match state.time_format {
+            crate::state::TimeFormat::Twelve => "12-hour".to_string(),
+            crate::state::TimeFormat::TwentyFour => "24-hour".to_string(),
+        },
+        saved: false,
+        has_override,
+        jmap_server_url: jmap.server_url,
+        jmap_username: jmap.username,
+        jmap_password: jmap.password,
+        jmap_token: jmap.token,
+        password_error: Some(msg.to_string()),
+    })
+    .into_response()
 }

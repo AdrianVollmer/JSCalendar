@@ -1,3 +1,4 @@
+mod admin;
 mod assets;
 mod auth;
 mod error;
@@ -5,6 +6,7 @@ mod ics;
 mod prefs;
 mod routes;
 mod state;
+mod users;
 mod view;
 mod webutil;
 
@@ -90,6 +92,16 @@ async fn main() {
             "/app/settings",
             get(routes::settings_form).post(routes::settings_save),
         )
+        .route(
+            "/admin/users",
+            get(admin::list_users).post(admin::create_user),
+        )
+        .route("/admin/users/new", get(admin::new_user_form))
+        .route(
+            "/admin/users/{id}/edit",
+            get(admin::edit_user_form).post(admin::update_user),
+        )
+        .route("/admin/users/{id}/delete", post(admin::delete_user))
         // Served at the root so its default scope covers the whole origin.
         .route("/sw.js", get(routes::service_worker))
         .nest_service("/static", ServeDir::new(&static_dir))

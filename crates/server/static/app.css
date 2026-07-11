@@ -121,6 +121,25 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .settings-card .field > span small { font-weight: 400; opacity: 0.75; }
 .settings-actions { display: flex; align-items: center; justify-content: space-between; margin-top: 0.4rem; }
 .settings-saved { color: var(--accent); font-size: 0.88em; margin: 0; background: color-mix(in srgb, var(--accent) 12%, transparent); padding: 0.5em 0.7em; border-radius: var(--radius-sm); }
+.settings-section-title { font-size: 0.95em; margin: 0.6rem 0 -0.4rem; padding-top: 0.8rem; border-top: 1px solid var(--border); }
+
+/* ---- admin: user list ---- */
+.admin-card { max-width: 480px; }
+.admin-user-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.4rem; }
+.admin-user-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.8em; padding: 0.6em 0.8em;
+  border-radius: var(--radius-md); background: var(--bg-elevated); border: 1px solid var(--border);
+}
+.admin-user-main { display: flex; flex-direction: column; gap: 0.2em; min-width: 0; }
+.admin-user-name { font-weight: 500; }
+.admin-user-meta { display: flex; align-items: center; gap: 0.6em; font-size: 0.85em; }
+.role-badge {
+  text-transform: uppercase; font-size: 0.75em; font-weight: 600; letter-spacing: 0.03em;
+  padding: 0.15em 0.5em; border-radius: var(--radius-sm); background: var(--bg-sunken); color: var(--text-muted);
+}
+.role-badge.role-admin { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+.admin-user-warn { color: var(--danger); }
+.admin-user-actions { display: flex; align-items: center; gap: 0.8em; flex-shrink: 0; }
 
 .field { display: flex; flex-direction: column; gap: 0.3rem; flex: 1; }
 .field > span { font-size: 0.82em; color: var(--text-muted); font-weight: 500; }

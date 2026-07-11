@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}{% if editing %}Edit user{% else %}New user{% endif %} – JSCalendar{% endblock %}
+{% block body %}
+<main class="login-page">
+  <form class="login-card settings-card" method="post" action="{% if editing %}/admin/users/{{ user_id }}/edit{% else %}/admin/users{% endif %}">
+    <div class="login-brand">
+      <img src="/static/icons/icon.svg" alt="" width="40" height="40">
+      <h1>{% if editing %}Edit user{% else %}New user{% endif %}</h1>
+    </div>
+    {% if let Some(err) = error %}
+    <p class="login-error" role="alert">{{ err }}</p>
+    {% endif %}
+
+    <label class="field">
+      <span>Username</span>
+      <input type="text" name="username" value="{{ username }}" required autofocus autocapitalize="off" autocorrect="off">
+    </label>
+    <label class="field">
+      <span>{% if editing %}New password <small>(leave blank to keep current)</small>{% else %}Password{% endif %}</span>
+      <input type="password" name="password" placeholder="••••••••" autocomplete="new-password" {% if !editing %}required{% endif %}>
+    </label>
+    <label class="field">
+      <span>Role</span>
+      <select name="role">
+        <option value="user" {% if role == "user" %}selected{% endif %}>User</option>
+        <option value="admin" {% if role == "admin" %}selected{% endif %}>Admin</option>
+      </select>
+    </label>
+
+    <div class="settings-actions">
+      <a class="btn btn-ghost" href="/admin/users">Cancel</a>
+      <button type="submit" class="btn btn-primary">{% if editing %}Save{% else %}Create{% endif %}</button>
+    </div>
+  </form>
+</main>
+{% endblock %}

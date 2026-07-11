@@ -23,14 +23,16 @@ COPY --from=builder /build/target/release/jscalendar-server /app/jscalendar-serv
 COPY --from=builder /build/target/release/mock-jmap-server /app/mock-jmap-server
 COPY crates/server/static /app/static
 COPY docker-demo-entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh && mkdir -p /app/data && chown jscalendar:jscalendar /app/data
 
 ENV JSCAL_STATIC_DIR=/app/static \
+    JSCAL_DATA_DIR=/app/data \
     PORT=8787 \
     JSCAL_TIMEZONE=UTC \
     JSCAL_DEMO_SERVER_URL=http://127.0.0.1:9090 \
     JSCAL_DEMO_USERNAME=demo \
-    JSCAL_DEMO_PASSWORD=demo
+    JSCAL_DEMO_PASSWORD=demo \
+    JSCAL_ADMIN_PASSWORD=admin
 EXPOSE 8787
 USER jscalendar
 
