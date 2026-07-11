@@ -47,6 +47,39 @@ Environment variables:
 | `JSCAL_DEMO_PASSWORD`   | `demo`                        | Pre-filled password, only used when `JSCAL_DEMO_SERVER_URL` is set   |
 | `JSCAL_HOLIDAYS_REGION` | unset                         | German federal state to show a "Public Holidays" pseudo-calendar for (see below); unset means the feature doesn't appear at all |
 | `JSCAL_TIME_FORMAT` | `12h`                             | Clock style for event/hour times: `12h` or `24h`. All four of these are also overridable per-browser from the in-app Settings page |
+| `JSCAL_SERVER_URL`  | unset                             | JMAP server to auto-connect every visitor to, skipping the login page entirely (see below) |
+| `JSCAL_USERNAME`    | unset                             | Username for `JSCAL_SERVER_URL`, used with `JSCAL_PASSWORD`/`JSCAL_PASSWORD_FILE` |
+| `JSCAL_PASSWORD`, `JSCAL_PASSWORD_FILE` | unset            | Password for `JSCAL_USERNAME`; `_FILE` reads it from a mounted file instead (see below) |
+| `JSCAL_TOKEN`, `JSCAL_TOKEN_FILE`       | unset            | Bearer token for `JSCAL_SERVER_URL`, tried before username/password if both are set; `_FILE` reads it from a mounted file |
+
+### Auto-login (single-tenant deployments)
+
+Setting `JSCAL_SERVER_URL` plus either `JSCAL_TOKEN`(`_FILE`) or
+`JSCAL_USERNAME`/`JSCAL_PASSWORD`(`_FILE`) makes the server transparently
+authenticate every visitor who doesn't already have their own session,
+instead of showing the login page — for a personal deployment where
+there's only one JMAP account and typing credentials into a form (or even
+seeing a login screen) is pure friction. The connection is established
+once and its `Client` is shared by every visitor after that; the `/login`
+page still works if you ever want to sign in as a different account
+manually, and "Sign out" drops the cached auto-login connection (forcing a
+fresh reconnect on the next visit — useful after rotating credentials).
+
+This is a different mechanism from `JSCAL_DEMO_*` above, which only
+pre-fills the login *form* for a human to still submit — it exists for the
+`make demo` mock-server target and intentionally never bypasses the login
+step.
+
+For the credential itself, prefer the `_FILE` variant
+(`JSCAL_PASSWORD_FILE=/run/secrets/jscal_password`, pointing at a Docker/
+Podman/Kubernetes secret mount) over the plain env var: a mounted file
+isn't visible in `docker inspect`, `ps`, or `/proc/[pid]/environ` the way
+process environment variables are. If you can't use a secrets mount, the
+plain `JSCAL_PASSWORD`/`JSCAL_TOKEN` env vars still work, but treat that
+container/host the way you'd treat any other place holding a plaintext
+credential (restricted `EnvironmentFile=` permissions for systemd, no
+committing the value to a compose file that lands in version control,
+etc.).
 
 Then open `http://localhost:8787`, sign in with your JMAP server's URL (or
 just its hostname — `/.well-known/jmap` is appended automatically),
@@ -145,9 +178,19 @@ it manually instead.
   values into `localStorage`, so they can restore the form if the cookie
   is ever cleared independently; the cookie remains the source of truth
   for what's actually rendered.
+- Auto-login (`JSCAL_SERVER_URL` + credentials, see "Running it" above):
+  skips the login page entirely for single-tenant deployments, with the
+  password/token preferably supplied via a mounted secret file
+  (`JSCAL_PASSWORD_FILE`) rather than a plaintext environment variable.
 
 ## Known limitations
 
+- Auto-login is genuinely single-tenant: every cookie-less visitor shares
+  the one connection established from `JSCAL_SERVER_URL`, with no
+  per-visitor identity or isolation. It's meant for "just me, on my own
+  network/VPN," not for putting a shared calendar in front of multiple
+  people who should see different accounts — use the normal login flow
+  (or your own auth in front of the app) for that.
 - The event editor only builds simple recurrence rules (a single frequency,
   interval, and end condition); it doesn't expose `byDay` weekday pickers or
   "nth weekday" UI, though events created elsewhere that use those are

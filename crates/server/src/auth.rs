@@ -86,6 +86,31 @@ pub async fn login(
     }
 }
 
+/// Connects to `session_url` with `creds` and builds a `UserSession` from
+/// the resulting JMAP session — shared by the login form and by
+/// `get_or_create_auto_session` so there's exactly one place that knows how
+/// to turn credentials into a working session.
+async fn connect_jmap(session_url: url::Url, creds: Credentials) -> Result<UserSession, String> {
+    let mut client = Client::new(session_url, creds);
+    client
+        .connect()
+        .await
+        .map_err(|e| format!("could not connect: {e}"))?;
+    let session = client.session().expect("connect populates session");
+    let account_id = session
+        .calendars_account_id()
+        .ok_or("server does not advertise JMAP Calendars support")?
+        .to_string();
+    let contacts_account_id = session.contacts_account_id().map(|s| s.to_string());
+    let username = session.username.clone();
+    Ok(UserSession {
+        client,
+        account_id,
+        username,
+        contacts_account_id,
+    })
+}
+
 async fn do_login(state: AppState, req: LoginRequest) -> Result<(Cookie<'static>, String), String> {
     let session_url = normalize_session_url(&req.server_url)?;
 
@@ -101,29 +126,11 @@ async fn do_login(state: AppState, req: LoginRequest) -> Result<(Cookie<'static>
         }
     };
 
-    let mut client = Client::new(session_url, creds);
-    client
-        .connect()
-        .await
-        .map_err(|e| format!("could not connect: {e}"))?;
-    let session = client.session().expect("connect populates session");
-    let account_id = session
-        .calendars_account_id()
-        .ok_or("server does not advertise JMAP Calendars support")?
-        .to_string();
-    let contacts_account_id = session.contacts_account_id().map(|s| s.to_string());
-    let username = session.username.clone();
+    let user_session = connect_jmap(session_url, creds).await?;
+    let username = user_session.username.clone();
 
     let sid = Uuid::new_v4().to_string();
-    state.sessions.insert(
-        sid.clone(),
-        UserSession {
-            client,
-            account_id,
-            username: username.clone(),
-            contacts_account_id,
-        },
-    );
+    state.sessions.insert(sid.clone(), user_session);
 
     let mut cookie = Cookie::new(COOKIE_NAME, sid);
     cookie.set_path("/");
@@ -132,10 +139,43 @@ async fn do_login(state: AppState, req: LoginRequest) -> Result<(Cookie<'static>
     Ok((cookie, username))
 }
 
+/// Resolves the shared session used to auto-authenticate cookie-less
+/// visitors when `AppState::auto_login` is configured, connecting (and
+/// caching the result) on first use.
+async fn get_or_create_auto_session(app_state: &AppState) -> Option<UserSession> {
+    if let Some(session) = app_state.auto_session.read().unwrap().clone() {
+        return Some(session);
+    }
+    let cfg = app_state.auto_login.as_ref()?;
+    let session_url = match normalize_session_url(&cfg.server_url) {
+        Ok(url) => url,
+        Err(e) => {
+            tracing::warn!("auto-login: invalid JSCAL_SERVER_URL: {e}");
+            return None;
+        }
+    };
+    match connect_jmap(session_url, cfg.credentials.clone()).await {
+        Ok(user_session) => {
+            *app_state.auto_session.write().unwrap() = Some(user_session.clone());
+            Some(user_session)
+        }
+        Err(e) => {
+            tracing::warn!("auto-login: could not connect: {e}");
+            None
+        }
+    }
+}
+
 pub async fn logout(State(state): State<AppState>, jar: CookieJar) -> impl IntoResponse {
     if let Some(cookie) = jar.get(COOKIE_NAME) {
         state.sessions.remove(cookie.value());
     }
+    // Also drop the cached auto-login session, so "Sign out" actually does
+    // something when auto-login is configured (otherwise the next visit to
+    // /app would just re-authenticate transparently with the cached
+    // client) — and so a credential rotation can take effect without a
+    // server restart.
+    *state.auto_session.write().unwrap() = None;
     let jar = jar.remove(Cookie::from(COOKIE_NAME));
     (jar, Redirect::to("/login"))
 }
@@ -160,19 +200,31 @@ where
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let app_state = AppState::from_ref(state);
-        let reject = || redirect_to_login(&parts.headers);
         let jar = CookieJar::from_headers(&parts.headers);
-        let sid = jar
-            .get(COOKIE_NAME)
-            .map(|c| c.value().to_string())
-            .ok_or_else(reject)?;
-        let session = app_state.sessions.get(&sid).ok_or_else(reject)?;
-        Ok(AuthedSession {
-            client: session.client.clone(),
-            account_id: session.account_id.clone(),
-            username: session.username.clone(),
-            contacts_account_id: session.contacts_account_id.clone(),
-        })
+        if let Some(sid) = jar.get(COOKIE_NAME).map(|c| c.value().to_string()) {
+            if let Some(session) = app_state.sessions.get(&sid) {
+                return Ok(AuthedSession {
+                    client: session.client.clone(),
+                    account_id: session.account_id.clone(),
+                    username: session.username.clone(),
+                    contacts_account_id: session.contacts_account_id.clone(),
+                });
+            }
+        }
+        // No cookie session — fall back to the operator-supplied
+        // credentials (JSCAL_SERVER_URL/...), if configured, instead of
+        // requiring every visitor to log in themselves.
+        if app_state.auto_login.is_some() {
+            if let Some(session) = get_or_create_auto_session(&app_state).await {
+                return Ok(AuthedSession {
+                    client: session.client,
+                    account_id: session.account_id,
+                    username: session.username,
+                    contacts_account_id: session.contacts_account_id,
+                });
+            }
+        }
+        Err(redirect_to_login(&parts.headers))
     }
 }
 

@@ -1,7 +1,8 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
 use dashmap::DashMap;
+use jmap_client::client::Credentials;
 use jmap_client::jscalendar::CalendarEvent;
 use jmap_client::jscontact::Card;
 use jmap_client::tz::Tz;
@@ -15,6 +16,55 @@ pub struct UserSession {
     /// `None` when the JMAP server doesn't advertise Contacts support —
     /// birthdays and the contacts list are simply hidden in that case.
     pub contacts_account_id: Option<String>,
+}
+
+/// Configuration for transparently authenticating every visitor who
+/// doesn't already have their own session, instead of showing the login
+/// page — for single-tenant deployments where the operator supplies the
+/// one JMAP account up front (`JSCAL_SERVER_URL` + `JSCAL_USERNAME`/
+/// `JSCAL_PASSWORD` or `JSCAL_TOKEN`).
+#[derive(Clone)]
+pub struct AutoLoginConfig {
+    pub server_url: String,
+    pub credentials: Credentials,
+}
+
+/// Reads `var`, preferring `{var}_FILE` (a path to a file holding the
+/// value) when set. This is the safer option for containers/orchestrators:
+/// a mounted secret file isn't visible in `docker inspect`, `ps`, or
+/// `/proc/[pid]/environ` the way a plain environment variable is.
+fn read_secret(var: &str) -> Option<String> {
+    if let Ok(path) = std::env::var(format!("{var}_FILE")) {
+        return std::fs::read_to_string(&path)
+            .map(|s| s.trim().to_string())
+            .ok();
+    }
+    std::env::var(var).ok()
+}
+
+fn read_auto_login() -> Option<AutoLoginConfig> {
+    let server_url = std::env::var("JSCAL_SERVER_URL").ok()?;
+    let token = read_secret("JSCAL_TOKEN").filter(|t| !t.is_empty());
+    let credentials = if let Some(token) = token {
+        Credentials::Bearer(token)
+    } else {
+        let username = std::env::var("JSCAL_USERNAME").ok();
+        let password = read_secret("JSCAL_PASSWORD");
+        match (username, password) {
+            (Some(username), Some(password)) => Credentials::Basic { username, password },
+            _ => {
+                tracing::warn!(
+                    "JSCAL_SERVER_URL is set but neither JSCAL_TOKEN nor \
+                     JSCAL_USERNAME+JSCAL_PASSWORD are — auto-login disabled"
+                );
+                return None;
+            }
+        }
+    };
+    Some(AutoLoginConfig {
+        server_url,
+        credentials,
+    })
 }
 
 /// How long a fetched contact list is trusted before re-fetching. There's
@@ -167,6 +217,13 @@ pub struct AppState {
     /// env var), or `None` to not offer a holidays pseudo-calendar at all.
     pub holidays_region: Option<holiday_de::GermanRegion>,
     pub time_format: TimeFormat,
+    /// Set from `JSCAL_SERVER_URL` + credentials; when present, visitors
+    /// without their own session cookie are transparently authenticated
+    /// using it instead of being shown the login page.
+    pub auto_login: Option<AutoLoginConfig>,
+    /// The shared session established from `auto_login`, connected lazily
+    /// on first use and reused by every cookie-less visitor after that.
+    pub auto_session: Arc<RwLock<Option<UserSession>>>,
 }
 
 impl AppState {
@@ -191,6 +248,7 @@ impl AppState {
             .ok()
             .and_then(|s| TimeFormat::parse(&s))
             .unwrap_or_default();
+        let auto_login = read_auto_login();
         Self {
             sessions: Arc::new(DashMap::new()),
             viewer_tz,
@@ -205,6 +263,8 @@ impl AppState {
                 .unwrap_or_default(),
             holidays_region,
             time_format,
+            auto_login,
+            auto_session: Arc::new(RwLock::new(None)),
         }
     }
 }
