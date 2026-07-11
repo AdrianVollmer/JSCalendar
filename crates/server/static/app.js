@@ -38,6 +38,26 @@
   });
 })();
 
+(function confirmSubmit() {
+  // Progressive-enhancement confirmation for forms marked data-confirm
+  // (e.g. admin user deletion) — without JS the form just submits, same
+  // as the hx-confirm-driven delete buttons elsewhere in the app already
+  // behave with JS disabled.
+  document.addEventListener("submit", (e) => {
+    const msg = e.target.getAttribute && e.target.getAttribute("data-confirm");
+    if (msg && !confirm(msg)) e.preventDefault();
+  });
+})();
+
+(function allDayToggle() {
+  document.addEventListener("change", (e) => {
+    if (e.target.matches && e.target.matches('input[name="all_day"]')) {
+      const form = e.target.closest("form");
+      if (form) form.classList.toggle("all-day", e.target.checked);
+    }
+  });
+})();
+
 (function scrollTimeGrid() {
   function scrollToRelevantHour() {
     const scroller = document.querySelector(".time-grid-scroll");

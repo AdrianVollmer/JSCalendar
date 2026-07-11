@@ -96,6 +96,36 @@ in your JMAP server's URL (or just its hostname;
 `/.well-known/jmap` is appended automatically), username/password, or an
 API token from the Settings page.
 
+## Security hardening
+
+A few things worth knowing if you're putting this in front of real users:
+
+- **Cookies get the `Secure` attribute automatically behind a
+  TLS-terminating reverse proxy** (nginx, Caddy, Traefik, most cloud load
+  balancers) as long as it sends `X-Forwarded-Proto: https`, which is the
+  default for most of them. Without a proxy in front (plain `cargo run`/
+  `make demo` over `http://127.0.0.1`), cookies aren't marked `Secure`, so
+  local development keeps working with no configuration.
+- **CSRF**: every mutating route only accepts POST/PATCH/DELETE (never
+  GET) and every cookie is `SameSite=Lax`, which together already block
+  cross-site form CSRF in current browsers. On top of that, a middleware
+  rejects any POST/PATCH/DELETE whose `Origin` (or `Referer`) doesn't match
+  the request's own `Host`, so a route can't accidentally ship unprotected.
+- **SSRF**: ICS-subscription URLs are resolved and checked against
+  private/loopback/link-local/multicast ranges (including cloud metadata
+  addresses like `169.254.169.254`) both when the subscription is saved
+  and on every re-fetch, redirects aren't followed, and the response body
+  is capped at 5 MiB.
+- **Login throttling**: after 5 failed attempts for a username, further
+  attempts are rejected for 30 seconds. Login also takes the same amount
+  of time whether or not the username exists, so response timing can't be
+  used to enumerate accounts.
+- **Response headers**: a strict-ish `Content-Security-Policy`
+  (`script-src 'self'`, no inline scripts anywhere in the app),
+  `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, and
+  `Referrer-Policy: strict-origin-when-cross-origin` are set on every
+  response.
+
 ## Trying it without a JMAP account
 
 `crates/mock-jmap-server` is a small in-memory JMAP server that accepts

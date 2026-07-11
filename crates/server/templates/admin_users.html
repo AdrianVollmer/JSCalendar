@@ -21,7 +21,7 @@
         <span class="admin-user-actions">
           <a class="btn-link" href="/admin/users/{{ u.id }}/edit">Edit</a>
           {% if !u.is_self %}
-          <form method="post" action="/admin/users/{{ u.id }}/delete" onsubmit="return confirm('Delete {{ u.username }}?');">
+          <form method="post" action="/admin/users/{{ u.id }}/delete" data-confirm="Delete {{ u.username }}?">
             <button type="submit" class="btn-link">Delete</button>
           </form>
           {% endif %}

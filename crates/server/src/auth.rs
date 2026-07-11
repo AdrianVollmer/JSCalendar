@@ -52,9 +52,10 @@ pub struct LoginRequest {
 pub async fn login(
     State(state): State<AppState>,
     jar: CookieJar,
+    headers: HeaderMap,
     Form(req): Form<LoginRequest>,
 ) -> Response {
-    match do_login(&state, req) {
+    match do_login(&state, req, crate::webutil::is_https(&headers)) {
         Ok(cookie) => {
             let jar = jar.add(cookie);
             (jar, Redirect::to("/app")).into_response()
@@ -63,20 +64,73 @@ pub async fn login(
     }
 }
 
-fn do_login(state: &AppState, req: LoginRequest) -> Result<Cookie<'static>, String> {
-    let user = state
-        .users
-        .find_by_username(&req.username)
-        .ok_or("invalid username or password")?;
-    if !crate::users::verify_password(&req.password, &user.password_hash) {
-        return Err("invalid username or password".to_string());
+/// After this many failed attempts for a username within `LOGIN_LOCKOUT`,
+/// further attempts are rejected without even checking the password —
+/// simple brute-force/credential-stuffing throttling. Resets on the next
+/// success or once the lockout window has passed without one.
+const MAX_FAILED_LOGIN_ATTEMPTS: u32 = 5;
+const LOGIN_LOCKOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// A pre-computed hash checked (and always rejected) when the username
+/// doesn't exist, so a login attempt costs the same argon2 verification
+/// time whether or not the account is real — otherwise a nonexistent
+/// username short-circuits before any hashing, and an attacker can
+/// enumerate valid usernames purely from response-time differences.
+fn dummy_password_hash() -> &'static str {
+    static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HASH.get_or_init(|| crate::users::hash_password("timing-side-channel-mitigation"))
+}
+
+fn login_lockout_remaining(state: &AppState, key: &str) -> Option<std::time::Duration> {
+    let entry = state.login_attempts.get(key)?;
+    if entry.failures < MAX_FAILED_LOGIN_ATTEMPTS {
+        return None;
     }
+    let elapsed = entry.last_failure?.elapsed();
+    (elapsed < LOGIN_LOCKOUT).then(|| LOGIN_LOCKOUT - elapsed)
+}
+
+fn record_failed_login(state: &AppState, key: &str) {
+    let mut entry = state.login_attempts.entry(key.to_string()).or_default();
+    entry.failures += 1;
+    entry.last_failure = Some(std::time::Instant::now());
+}
+
+fn do_login(
+    state: &AppState,
+    req: LoginRequest,
+    is_https: bool,
+) -> Result<Cookie<'static>, String> {
+    let key = req.username.trim().to_lowercase();
+    if let Some(remaining) = login_lockout_remaining(state, &key) {
+        return Err(format!(
+            "too many attempts — try again in {}s",
+            remaining.as_secs().max(1)
+        ));
+    }
+
+    let user = state.users.find_by_username(&req.username);
+    let hash = user
+        .as_ref()
+        .map(|u| u.password_hash.clone())
+        .unwrap_or_else(|| dummy_password_hash().to_string());
+    let verified = crate::users::verify_password(&req.password, &hash);
+
+    let user = match (user, verified) {
+        (Some(u), true) => u,
+        _ => {
+            record_failed_login(state, &key);
+            return Err("invalid username or password".to_string());
+        }
+    };
+    state.login_attempts.remove(&key);
 
     let token = state.users.create_session(user.id);
     let mut cookie = Cookie::new(COOKIE_NAME, token);
     cookie.set_path("/");
     cookie.set_http_only(true);
     cookie.set_same_site(SameSite::Lax);
+    cookie.set_secure(is_https);
     cookie.set_max_age(time::Duration::days(SESSION_COOKIE_DAYS));
     Ok(cookie)
 }

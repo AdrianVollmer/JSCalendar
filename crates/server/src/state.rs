@@ -189,6 +189,18 @@ pub struct AppState {
     /// env var), or `None` to not offer a holidays pseudo-calendar at all.
     pub holidays_region: Option<holiday_de::GermanRegion>,
     pub time_format: TimeFormat,
+    /// Recent failed login attempts, keyed by lowercased username, used to
+    /// lock an account out for a short window after too many failures in a
+    /// row (see `auth::do_login`). Grows one entry per distinct username
+    /// ever attempted; unbounded in principle, but each entry is a few
+    /// bytes and this is an acceptable trade-off for a self-hosted app.
+    pub login_attempts: Arc<DashMap<String, LoginAttemptState>>,
+}
+
+#[derive(Debug, Default)]
+pub struct LoginAttemptState {
+    pub failures: u32,
+    pub last_failure: Option<Instant>,
 }
 
 impl AppState {
@@ -221,13 +233,21 @@ impl AppState {
             contacts_cache: Arc::new(DashMap::new()),
             ics_subscriptions: Arc::new(DashMap::new()),
             ics_cache: Arc::new(DashMap::new()),
+            // No redirects: this client only ever fetches user-supplied
+            // ICS-subscription URLs (see `crate::netguard`), and a
+            // followed redirect would land on a host we never ran the
+            // private-address check against — a classic SSRF-via-redirect
+            // bypass. A redirected feed just fails with a clear error
+            // instead of being fetched blind.
             http_client: reqwest::Client::builder()
                 .user_agent("jscalendar-server")
                 .timeout(std::time::Duration::from_secs(15))
+                .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .unwrap_or_default(),
             holidays_region,
             time_format,
+            login_attempts: Arc::new(DashMap::new()),
         }
     }
 }

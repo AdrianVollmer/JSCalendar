@@ -6,6 +6,7 @@ use axum::http::HeaderMap;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::Form;
 use chrono::{Datelike, NaiveDate, NaiveDateTime};
+use futures_util::StreamExt;
 use jmap_client::duration::{format_duration, parse_duration};
 use jmap_client::jscalendar::{Calendar, CalendarEvent, Frequency, LocalDateTime, RecurrenceRule};
 use jmap_client::jscontact::{
@@ -231,10 +232,25 @@ fn ics_subscription_ids(state: &AppState, session: &AuthedSession) -> Vec<String
         .collect()
 }
 
+/// Feeds are trusted to be reasonably small calendar exports, not
+/// arbitrary downloads; this just bounds how much memory one subscription
+/// can make the server hold regardless of what the remote host sends.
+const ICS_MAX_RESPONSE_BYTES: usize = 5 * 1024 * 1024;
+
 async fn fetch_and_parse_ics(
     state: &AppState,
     sub: &crate::state::IcsSubscription,
 ) -> Result<Vec<CalendarEvent>, String> {
+    let parsed = url::Url::parse(&sub.url).map_err(|e| format!("invalid URL: {e}"))?;
+    let host = parsed.host_str().ok_or("URL has no host")?;
+    let port = parsed
+        .port_or_known_default()
+        .ok_or("URL has no known port")?;
+    // Re-checked on every fetch, not just when the subscription was
+    // created: a hostname that resolved publicly then could resolve
+    // privately now (DNS changes, TTL expiry) — see `crate::netguard`.
+    crate::netguard::ensure_resolves_publicly(host, port).await?;
+
     let resp = state
         .http_client
         .get(&sub.url)
@@ -244,7 +260,17 @@ async fn fetch_and_parse_ics(
     if !resp.status().is_success() {
         return Err(format!("HTTP {}", resp.status()));
     }
-    let text = resp.text().await.map_err(|e| e.to_string())?;
+
+    let mut body = Vec::new();
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| e.to_string())?;
+        if body.len() + chunk.len() > ICS_MAX_RESPONSE_BYTES {
+            return Err("feed response too large".to_string());
+        }
+        body.extend_from_slice(&chunk);
+    }
+    let text = String::from_utf8_lossy(&body);
     Ok(crate::ics::parse_events(&text, &sub.id))
 }
 
@@ -1981,7 +2007,7 @@ fn build_calendar_from_form(form: &CalendarFormBody) -> Result<Calendar, String>
     }
     let mut calendar = Calendar::new(name);
     if !form.color.is_empty() {
-        calendar.color = Some(form.color.clone());
+        calendar.color = Some(validate_color(&form.color)?);
     }
     if !form.description.is_empty() {
         calendar.description = Some(form.description.clone());
@@ -2335,7 +2361,7 @@ pub struct IcsFormBody {
     pub url: String,
 }
 
-fn validate_ics_form(form: &IcsFormBody) -> Result<(String, String, String), String> {
+async fn validate_ics_form(form: &IcsFormBody) -> Result<(String, String, String), String> {
     let name = form.name.trim().to_string();
     if name.is_empty() {
         return Err("name is required".to_string());
@@ -2345,12 +2371,31 @@ fn validate_ics_form(form: &IcsFormBody) -> Result<(String, String, String), Str
     if parsed.scheme() != "http" && parsed.scheme() != "https" {
         return Err("URL must be http:// or https://".to_string());
     }
+    let host = parsed.host_str().ok_or("URL has no host")?;
+    let port = parsed
+        .port_or_known_default()
+        .ok_or("URL has no known port")?;
+    crate::netguard::ensure_resolves_publicly(host, port).await?;
     let color = if form.color.is_empty() {
         DEFAULT_ICS_COLOR.to_string()
     } else {
-        form.color.clone()
+        validate_color(&form.color)?
     };
     Ok((name, color, url))
+}
+
+/// A `#rgb` or `#rrggbb` hex color, matching what the `<input type="color">`
+/// picker actually submits. Rejects anything else so a hand-crafted form
+/// post can't smuggle extra CSS declarations into the `style="--cal-color:
+/// ..."` attribute these values are later rendered into.
+fn validate_color(s: &str) -> Result<String, String> {
+    let hex = s.strip_prefix('#').unwrap_or(s);
+    let valid_len = hex.len() == 3 || hex.len() == 6;
+    if valid_len && hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        Ok(format!("#{hex}"))
+    } else {
+        Err("color must be a hex value like #6366f1".to_string())
+    }
 }
 
 async fn render_ics_form_error(
@@ -2450,7 +2495,7 @@ pub async fn ics_create(
     Form(form): Form<IcsFormBody>,
 ) -> Result<Response, AppError> {
     let state = crate::prefs::apply(state, &headers);
-    let (name, color, url) = match validate_ics_form(&form) {
+    let (name, color, url) = match validate_ics_form(&form).await {
         Ok(v) => v,
         Err(msg) => return render_ics_form_error(&state, &session, &form, false, None, msg).await,
     };
@@ -2496,7 +2541,7 @@ pub async fn ics_update(
     Form(form): Form<IcsFormBody>,
 ) -> Result<Response, AppError> {
     let state = crate::prefs::apply(state, &headers);
-    let (name, color, url) = match validate_ics_form(&form) {
+    let (name, color, url) = match validate_ics_form(&form).await {
         Ok(v) => v,
         Err(msg) => {
             return render_ics_form_error(&state, &session, &form, true, Some(id), msg).await
@@ -2824,6 +2869,7 @@ pub async fn settings_save(
     let mut cookie = axum_extra::extract::cookie::Cookie::new(crate::prefs::PREFS_COOKIE, value);
     cookie.set_path("/");
     cookie.set_same_site(axum_extra::extract::cookie::SameSite::Lax);
+    cookie.set_secure(crate::webutil::is_https(&headers));
     cookie.set_max_age(time::Duration::days(365));
     let jar = axum_extra::extract::cookie::CookieJar::new().add(cookie);
     (

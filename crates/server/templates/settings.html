@@ -2,7 +2,7 @@
 {% block title %}Settings – JSCalendar{% endblock %}
 {% block body %}
 <main class="login-page">
-  <form class="login-card settings-card" method="post" action="/app/settings" id="settings-form">
+  <form class="login-card settings-card" method="post" action="/app/settings" id="settings-form" data-has-override="{{ has_override }}">
     <div class="login-brand">
       <img src="/static/icons/icon.svg" alt="" width="40" height="40">
       <h1>Settings</h1>
@@ -83,29 +83,5 @@
     </div>
   </form>
 </main>
-<script>
-(function () {
-  var form = document.getElementById("settings-form");
-  if (!form) return;
-  var hasServerValue = {{ has_override }};
-  try {
-    var saved = localStorage.getItem("jscal_prefs");
-    if (saved && !hasServerValue) {
-      var prefs = JSON.parse(saved);
-      if (prefs.tz) form.timezone.value = prefs.tz;
-      if (prefs.tf) form.time_format.value = prefs.tf;
-      if (prefs.hr) form.holidays_region.value = prefs.hr;
-    }
-  } catch (e) {}
-  form.addEventListener("submit", function () {
-    try {
-      localStorage.setItem("jscal_prefs", JSON.stringify({
-        tz: form.timezone.value,
-        tf: form.time_format.value,
-        hr: form.holidays_region.value,
-      }));
-    } catch (e) {}
-  });
-})();
-</script>
+<script src="{{ crate::assets::settings_js_url() }}" defer></script>
 {% endblock %}

@@ -1,10 +1,13 @@
 mod admin;
 mod assets;
 mod auth;
+mod csrf;
 mod error;
 mod ics;
+mod netguard;
 mod prefs;
 mod routes;
+mod security_headers;
 mod state;
 mod users;
 mod view;
@@ -105,6 +108,10 @@ async fn main() {
         // Served at the root so its default scope covers the whole origin.
         .route("/sw.js", get(routes::service_worker))
         .nest_service("/static", ServeDir::new(&static_dir))
+        .layer(axum::middleware::from_fn(
+            security_headers::add_security_headers,
+        ))
+        .layer(axum::middleware::from_fn(csrf::verify_same_origin))
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())
         .with_state(state);

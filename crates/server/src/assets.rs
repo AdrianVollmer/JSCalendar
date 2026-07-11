@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::OnceLock;
 
-const HASHED_ASSETS: &[&str] = &["app.css", "app.js", "htmx.min.js"];
+const HASHED_ASSETS: &[&str] = &["app.css", "app.js", "htmx.min.js", "settings.js"];
 
 static VERSIONS: OnceLock<HashMap<&'static str, String>> = OnceLock::new();
 static SW_BODY: OnceLock<String> = OnceLock::new();
@@ -62,6 +62,10 @@ pub fn js_url() -> String {
 
 pub fn htmx_url() -> String {
     url("htmx.min.js")
+}
+
+pub fn settings_js_url() -> String {
+    url("settings.js")
 }
 
 /// The pre-rendered `sw.js` body, with its shell-asset URLs already
