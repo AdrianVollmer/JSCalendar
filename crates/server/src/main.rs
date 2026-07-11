@@ -2,6 +2,7 @@ mod assets;
 mod auth;
 mod error;
 mod ics;
+mod prefs;
 mod routes;
 mod state;
 mod view;
@@ -84,6 +85,10 @@ async fn main() {
         .route(
             "/app/ics/{id}",
             patch(routes::ics_update).delete(routes::ics_delete_hx),
+        )
+        .route(
+            "/app/settings",
+            get(routes::settings_form).post(routes::settings_save),
         )
         // Served at the root so its default scope covers the whole origin.
         .route("/sw.js", get(routes::service_worker))

@@ -5,6 +5,8 @@ use jmap_client::tz::{self, Tz};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
+use crate::state::TimeFormat;
+
 pub const HOUR_HEIGHT_PX: f64 = 48.0;
 const PALETTE: [&str; 8] = [
     "#6366f1", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#14b8a6",
@@ -326,16 +328,19 @@ pub struct HourRow {
     pub label: String,
 }
 
-pub fn hour_rows() -> Vec<HourRow> {
+pub fn hour_rows(fmt: TimeFormat) -> Vec<HourRow> {
     (0..24)
         .map(|h| HourRow {
             hour: h,
-            label: label_for_hour(h),
+            label: label_for_hour(h, fmt),
         })
         .collect()
 }
 
-fn label_for_hour(h: u32) -> String {
+fn label_for_hour(h: u32, fmt: TimeFormat) -> String {
+    if fmt == TimeFormat::TwentyFour {
+        return format!("{h:02}:00");
+    }
     if h == 0 {
         "12 AM".to_string()
     } else if h < 12 {
@@ -415,18 +420,19 @@ pub fn localize_events(
     out
 }
 
-fn time_label(start: NaiveDateTime, end: NaiveDateTime) -> String {
-    format!(
-        "{}\u{2013}{}",
-        start.format("%-I:%M %p"),
-        end.format("%-I:%M %p")
-    )
+fn time_label(start: NaiveDateTime, end: NaiveDateTime, fmt: TimeFormat) -> String {
+    let pattern = match fmt {
+        TimeFormat::Twelve => "%-I:%M %p",
+        TimeFormat::TwentyFour => "%H:%M",
+    };
+    format!("{}\u{2013}{}", start.format(pattern), end.format(pattern))
 }
 
 fn to_event_view(
     l: &Localized,
     calendars: &[Calendar],
     ics_colors: &HashMap<String, String>,
+    time_format: TimeFormat,
 ) -> EventView {
     let read_only = crate::ics::is_ics_pseudo_id(&l.calendar_id);
     let calendar = calendars
@@ -453,7 +459,7 @@ fn to_event_view(
         time_label: if l.all_day {
             "All day".to_string()
         } else {
-            time_label(l.start, l.end)
+            time_label(l.start, l.end, time_format)
         },
         edit_href: if read_only {
             String::new()
@@ -532,6 +538,7 @@ pub struct BuildInputs<'a> {
     /// look up.
     pub ics_colors: &'a HashMap<String, String>,
     pub viewer_tz: Tz,
+    pub time_format: TimeFormat,
     pub params: &'a ViewParams,
     pub today: NaiveDate,
 }
@@ -583,7 +590,9 @@ pub fn build_month(inputs: &BuildInputs) -> MonthView {
                 localized
                     .iter()
                     .filter(|l| l.start.date() == cursor)
-                    .map(|l| to_event_view(l, inputs.calendars, inputs.ics_colors)),
+                    .map(|l| {
+                        to_event_view(l, inputs.calendars, inputs.ics_colors, inputs.time_format)
+                    }),
             );
             let more_count = day_events.len().saturating_sub(4);
             week.push(DayCell {
@@ -631,7 +640,7 @@ pub fn build_week(inputs: &BuildInputs) -> WeekView {
         all_day.extend(holidays_on(inputs, date));
         let mut timed: Vec<EventView> = Vec::new();
         for l in localized.iter().filter(|l| l.start.date() == date) {
-            let ev = to_event_view(l, inputs.calendars, inputs.ics_colors);
+            let ev = to_event_view(l, inputs.calendars, inputs.ics_colors, inputs.time_format);
             if l.all_day {
                 all_day.push(ev);
             } else {
@@ -650,7 +659,7 @@ pub fn build_week(inputs: &BuildInputs) -> WeekView {
 
     WeekView {
         days,
-        hours: hour_rows(),
+        hours: hour_rows(inputs.time_format),
     }
 }
 
@@ -677,7 +686,7 @@ pub fn build_day(inputs: &BuildInputs) -> DayViewModel {
     all_day.extend(holidays_on(inputs, date));
     let mut timed: Vec<EventView> = Vec::new();
     for l in &localized {
-        let ev = to_event_view(l, inputs.calendars, inputs.ics_colors);
+        let ev = to_event_view(l, inputs.calendars, inputs.ics_colors, inputs.time_format);
         if l.all_day {
             all_day.push(ev);
         } else {
@@ -694,7 +703,7 @@ pub fn build_day(inputs: &BuildInputs) -> DayViewModel {
             all_day_events: all_day,
             timed_events: timed,
         },
-        hours: hour_rows(),
+        hours: hour_rows(inputs.time_format),
     }
 }
 
@@ -738,7 +747,7 @@ pub fn build_agenda(inputs: &BuildInputs) -> AgendaView {
     combined.extend(localized.iter().map(|l| {
         (
             l.start.date(),
-            to_event_view(l, inputs.calendars, inputs.ics_colors),
+            to_event_view(l, inputs.calendars, inputs.ics_colors, inputs.time_format),
         )
     }));
     combined.sort_by_key(|(date, _)| *date);

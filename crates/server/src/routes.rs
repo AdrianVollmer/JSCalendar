@@ -448,6 +448,7 @@ async fn render_fragment(
         holidays: &holidays,
         ics_colors: &ics_colors,
         viewer_tz: state.viewer_tz,
+        time_format: state.time_format,
         params,
         today,
     };
@@ -758,6 +759,7 @@ pub async fn app_view(
     Query(raw): Query<RawViewQuery>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
+    let state = crate::prefs::apply(state, &headers);
     let today = today_in(state.viewer_tz);
     let calendars = session.client.get_calendars(&session.account_id).await?;
     let params = resolve_view_params(
@@ -1002,6 +1004,7 @@ pub async fn event_new_form(
     Query(raw): Query<RawViewQuery>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
+    let state = crate::prefs::apply(state, &headers);
     let today = today_in(state.viewer_tz);
     let calendars = session.client.get_calendars(&session.account_id).await?;
     let params = resolve_view_params(
@@ -1033,6 +1036,7 @@ pub async fn event_edit_form(
     Query(raw): Query<RawViewQuery>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
+    let state = crate::prefs::apply(state, &headers);
     let today = today_in(state.viewer_tz);
     let calendars = session.client.get_calendars(&session.account_id).await?;
     let params = resolve_view_params(
@@ -1230,6 +1234,7 @@ pub async fn event_create(
     headers: HeaderMap,
     Form(form): Form<EventFormBody>,
 ) -> Result<Response, AppError> {
+    let state = crate::prefs::apply(state, &headers);
     let uid = Uuid::new_v4().to_string();
     let event = match build_event_from_form(&form, uid) {
         Ok(e) => e,
@@ -1258,6 +1263,7 @@ pub async fn event_update(
     headers: HeaderMap,
     Form(form): Form<EventFormBody>,
 ) -> Result<Response, AppError> {
+    let state = crate::prefs::apply(state, &headers);
     let event = match build_event_from_form(&form, String::new()) {
         Ok(e) => e,
         Err(msg) => return render_form_error(&state, &session, &form, true, Some(id), msg).await,
@@ -1346,6 +1352,7 @@ pub async fn event_delete_hx(
     headers: HeaderMap,
     Query(form): Query<DeleteFormBody>,
 ) -> Result<Response, AppError> {
+    let state = crate::prefs::apply(state, &headers);
     event_delete_inner(&state, &session, &id, &headers, &form).await
 }
 
@@ -1356,6 +1363,7 @@ pub async fn event_delete_post(
     headers: HeaderMap,
     Form(form): Form<DeleteFormBody>,
 ) -> Result<Response, AppError> {
+    let state = crate::prefs::apply(state, &headers);
     event_delete_inner(&state, &session, &id, &headers, &form).await
 }
 
@@ -1495,6 +1503,7 @@ pub async fn contact_new_form(
     Query(raw): Query<RawViewQuery>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
+    let state = crate::prefs::apply(state, &headers);
     let today = today_in(state.viewer_tz);
     let calendars = session.client.get_calendars(&session.account_id).await?;
     let params = resolve_view_params(
@@ -1530,6 +1539,7 @@ pub async fn contact_edit_form(
     Query(raw): Query<RawViewQuery>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
+    let state = crate::prefs::apply(state, &headers);
     let today = today_in(state.viewer_tz);
     let calendars = session.client.get_calendars(&session.account_id).await?;
     let params = resolve_view_params(
@@ -1688,6 +1698,7 @@ pub async fn contact_create(
     headers: HeaderMap,
     Form(form): Form<ContactFormBody>,
 ) -> Result<Response, AppError> {
+    let state = crate::prefs::apply(state, &headers);
     let Some(contacts_account_id) = session.contacts_account_id.clone() else {
         return Err(AppError::bad_request(
             "this server does not support contacts",
@@ -1724,6 +1735,7 @@ pub async fn contact_update(
     headers: HeaderMap,
     Form(form): Form<ContactFormBody>,
 ) -> Result<Response, AppError> {
+    let state = crate::prefs::apply(state, &headers);
     let Some(contacts_account_id) = session.contacts_account_id.clone() else {
         return Err(AppError::bad_request(
             "this server does not support contacts",
@@ -1773,6 +1785,7 @@ pub async fn contact_delete_hx(
     headers: HeaderMap,
     Query(form): Query<ContactDeleteFormBody>,
 ) -> Result<Response, AppError> {
+    let state = crate::prefs::apply(state, &headers);
     contact_delete_inner(&state, &session, &id, &headers, &form).await
 }
 
@@ -1783,6 +1796,7 @@ pub async fn contact_delete_post(
     headers: HeaderMap,
     Form(form): Form<ContactDeleteFormBody>,
 ) -> Result<Response, AppError> {
+    let state = crate::prefs::apply(state, &headers);
     contact_delete_inner(&state, &session, &id, &headers, &form).await
 }
 
@@ -1877,6 +1891,7 @@ pub async fn calendar_new_form(
     Query(raw): Query<RawViewQuery>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
+    let state = crate::prefs::apply(state, &headers);
     let today = today_in(state.viewer_tz);
     let calendars = session.client.get_calendars(&session.account_id).await?;
     let params = resolve_view_params(
@@ -1908,6 +1923,7 @@ pub async fn calendar_edit_form(
     Query(raw): Query<RawViewQuery>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
+    let state = crate::prefs::apply(state, &headers);
     let today = today_in(state.viewer_tz);
     let calendars = session.client.get_calendars(&session.account_id).await?;
     let params = resolve_view_params(
@@ -2062,6 +2078,7 @@ pub async fn calendar_create(
     headers: HeaderMap,
     Form(form): Form<CalendarFormBody>,
 ) -> Result<Response, AppError> {
+    let state = crate::prefs::apply(state, &headers);
     let calendar = match build_calendar_from_form(&form) {
         Ok(c) => c,
         Err(msg) => {
@@ -2099,6 +2116,7 @@ pub async fn calendar_update(
     headers: HeaderMap,
     Form(form): Form<CalendarFormBody>,
 ) -> Result<Response, AppError> {
+    let state = crate::prefs::apply(state, &headers);
     let calendar = match build_calendar_from_form(&form) {
         Ok(c) => c,
         Err(msg) => {
@@ -2139,6 +2157,7 @@ pub async fn calendar_delete_hx(
     headers: HeaderMap,
     Query(form): Query<CalendarDeleteFormBody>,
 ) -> Result<Response, AppError> {
+    let state = crate::prefs::apply(state, &headers);
     calendar_delete_inner(&state, &session, &id, &headers, &form).await
 }
 
@@ -2149,6 +2168,7 @@ pub async fn calendar_delete_post(
     headers: HeaderMap,
     Form(form): Form<CalendarDeleteFormBody>,
 ) -> Result<Response, AppError> {
+    let state = crate::prefs::apply(state, &headers);
     calendar_delete_inner(&state, &session, &id, &headers, &form).await
 }
 
@@ -2233,6 +2253,7 @@ pub async fn ics_new_form(
     Query(raw): Query<RawViewQuery>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
+    let state = crate::prefs::apply(state, &headers);
     let today = today_in(state.viewer_tz);
     let calendars = session.client.get_calendars(&session.account_id).await?;
     let params = resolve_view_params(
@@ -2264,6 +2285,7 @@ pub async fn ics_edit_form(
     Query(raw): Query<RawViewQuery>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
+    let state = crate::prefs::apply(state, &headers);
     let today = today_in(state.viewer_tz);
     let calendars = session.client.get_calendars(&session.account_id).await?;
     let params = resolve_view_params(
@@ -2421,6 +2443,7 @@ pub async fn ics_create(
     headers: HeaderMap,
     Form(form): Form<IcsFormBody>,
 ) -> Result<Response, AppError> {
+    let state = crate::prefs::apply(state, &headers);
     let (name, color, url) = match validate_ics_form(&form) {
         Ok(v) => v,
         Err(msg) => return render_ics_form_error(&state, &session, &form, false, None, msg).await,
@@ -2466,6 +2489,7 @@ pub async fn ics_update(
     headers: HeaderMap,
     Form(form): Form<IcsFormBody>,
 ) -> Result<Response, AppError> {
+    let state = crate::prefs::apply(state, &headers);
     let (name, color, url) = match validate_ics_form(&form) {
         Ok(v) => v,
         Err(msg) => {
@@ -2514,6 +2538,7 @@ pub async fn ics_delete_hx(
     headers: HeaderMap,
     Query(form): Query<IcsDeleteFormBody>,
 ) -> Result<Response, AppError> {
+    let state = crate::prefs::apply(state, &headers);
     ics_delete_inner(&state, &session, &id, &headers, &form).await
 }
 
@@ -2524,6 +2549,7 @@ pub async fn ics_delete_post(
     headers: HeaderMap,
     Form(form): Form<IcsDeleteFormBody>,
 ) -> Result<Response, AppError> {
+    let state = crate::prefs::apply(state, &headers);
     ics_delete_inner(&state, &session, &id, &headers, &form).await
 }
 
@@ -2548,4 +2574,200 @@ async fn ics_delete_inner(
         &form.back_cal,
     )
     .await
+}
+
+// ---- Settings page ---------------------------------------------------------
+
+/// English label for each `state::ALL_GERMAN_REGIONS` entry — the internal
+/// names are the exact Rust enum variant names, which read fine in code but
+/// aren't great UI copy (e.g. "MechlenburgVorpommern").
+const GERMAN_REGION_LABELS: &[(&str, &str)] = &[
+    ("BadenWuerttemberg", "Baden-Württemberg"),
+    ("Bayern", "Bavaria (Bayern)"),
+    ("Berlin", "Berlin"),
+    ("Brandenburg", "Brandenburg"),
+    ("Bremen", "Bremen"),
+    ("Hamburg", "Hamburg"),
+    ("Hessen", "Hesse (Hessen)"),
+    ("MechlenburgVorpommern", "Mecklenburg-Vorpommern"),
+    ("Niedersachsen", "Lower Saxony (Niedersachsen)"),
+    ("NordrheinWestfalen", "North Rhine-Westphalia (NRW)"),
+    ("RheinlandPfalz", "Rhineland-Palatinate"),
+    ("Saarland", "Saarland"),
+    ("Sachsen", "Saxony (Sachsen)"),
+    ("SachsenAnhalt", "Saxony-Anhalt"),
+    ("SchleswigHolstein", "Schleswig-Holstein"),
+    ("Thueringen", "Thuringia (Thüringen)"),
+];
+
+struct SelectOption {
+    value: String,
+    label: String,
+    selected: bool,
+}
+
+fn holiday_region_options(selected: &str) -> Vec<SelectOption> {
+    let mut opts = vec![
+        SelectOption {
+            value: String::new(),
+            label: "Use server default".to_string(),
+            selected: selected.is_empty(),
+        },
+        SelectOption {
+            value: "none".to_string(),
+            label: "None (disabled)".to_string(),
+            selected: selected == "none",
+        },
+    ];
+    for &(value, label) in GERMAN_REGION_LABELS {
+        opts.push(SelectOption {
+            selected: selected == value,
+            value: value.to_string(),
+            label: label.to_string(),
+        });
+    }
+    opts
+}
+
+fn display_tz_options(selected: &str) -> Vec<TzOption> {
+    let mut opts = vec![TzOption {
+        value: String::new(),
+        label: "Use server default".to_string(),
+        selected: selected.is_empty(),
+    }];
+    let mut seen_selected = selected.is_empty();
+    for &z in COMMON_ZONES {
+        if z == selected {
+            seen_selected = true;
+        }
+        opts.push(TzOption {
+            value: z.to_string(),
+            label: z.replace('_', " "),
+            selected: z == selected,
+        });
+    }
+    if !seen_selected && !selected.is_empty() {
+        opts.push(TzOption {
+            value: selected.to_string(),
+            label: selected.replace('_', " "),
+            selected: true,
+        });
+    }
+    opts
+}
+
+fn time_format_options(selected: &str) -> Vec<SelectOption> {
+    vec![
+        SelectOption {
+            value: String::new(),
+            label: "Use server default".to_string(),
+            selected: selected.is_empty(),
+        },
+        SelectOption {
+            value: "12h".to_string(),
+            label: "12-hour (3:45 PM)".to_string(),
+            selected: selected == "12h",
+        },
+        SelectOption {
+            value: "24h".to_string(),
+            label: "24-hour (15:45)".to_string(),
+            selected: selected == "24h",
+        },
+    ]
+}
+
+#[derive(Template)]
+#[template(path = "settings.html")]
+struct SettingsTemplate {
+    timezones: Vec<TzOption>,
+    holiday_regions: Vec<SelectOption>,
+    time_formats: Vec<SelectOption>,
+    server_default_timezone: String,
+    server_default_holidays: String,
+    server_default_time_format: String,
+    saved: bool,
+    /// Whether the `jscal_prefs` cookie set at least one field — when it
+    /// hasn't (e.g. a cleared cookie), the settings page's own script uses
+    /// this to decide whether it's safe to prefill the form from
+    /// `localStorage` instead.
+    has_override: bool,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct SettingsQuery {
+    #[serde(default)]
+    saved: bool,
+}
+
+pub async fn settings_form(
+    State(state): State<AppState>,
+    _session: AuthedSession,
+    headers: HeaderMap,
+    Query(q): Query<SettingsQuery>,
+) -> Response {
+    let prefs = crate::prefs::UserPrefs::from_headers(&headers);
+    let has_override =
+        prefs.timezone.is_some() || prefs.holidays_region.is_some() || prefs.time_format.is_some();
+    let timezone = prefs.timezone.map(|tz| tz.to_string()).unwrap_or_default();
+    let holidays_region = match prefs.holidays_region {
+        None => String::new(),
+        Some(None) => "none".to_string(),
+        Some(Some(region)) => crate::state::german_region_name(region).to_string(),
+    };
+    let time_format = prefs
+        .time_format
+        .map(|f| f.as_str().to_string())
+        .unwrap_or_default();
+    render(&SettingsTemplate {
+        timezones: display_tz_options(&timezone),
+        holiday_regions: holiday_region_options(&holidays_region),
+        time_formats: time_format_options(&time_format),
+        server_default_timezone: state.viewer_tz.to_string(),
+        server_default_holidays: state
+            .holidays_region
+            .map(crate::state::german_region_name)
+            .map(|name| {
+                GERMAN_REGION_LABELS
+                    .iter()
+                    .find(|(n, _)| *n == name)
+                    .map(|(_, label)| label.to_string())
+                    .unwrap_or_else(|| name.to_string())
+            })
+            .unwrap_or_else(|| "None".to_string()),
+        server_default_time_format: match state.time_format {
+            crate::state::TimeFormat::Twelve => "12-hour".to_string(),
+            crate::state::TimeFormat::TwentyFour => "24-hour".to_string(),
+        },
+        saved: q.saved,
+        has_override,
+    })
+    .into_response()
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct SettingsFormBody {
+    #[serde(default)]
+    pub timezone: String,
+    #[serde(default)]
+    pub holidays_region: String,
+    #[serde(default)]
+    pub time_format: String,
+}
+
+pub async fn settings_save(
+    _session: AuthedSession,
+    headers: HeaderMap,
+    Form(form): Form<SettingsFormBody>,
+) -> Response {
+    let value = crate::prefs::encode(&form.timezone, &form.holidays_region, &form.time_format);
+    let mut cookie = axum_extra::extract::cookie::Cookie::new(crate::prefs::PREFS_COOKIE, value);
+    cookie.set_path("/");
+    cookie.set_same_site(axum_extra::extract::cookie::SameSite::Lax);
+    cookie.set_max_age(time::Duration::days(365));
+    let jar = axum_extra::extract::cookie::CookieJar::new().add(cookie);
+    (
+        jar,
+        crate::webutil::redirect("/app/settings?saved=true", &headers),
+    )
+        .into_response()
 }

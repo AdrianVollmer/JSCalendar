@@ -117,6 +117,10 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .login-advanced { font-size: 0.85em; color: var(--text-muted); }
 .login-advanced summary { cursor: pointer; }
 .login-advanced .field { margin-top: 0.6rem; }
+.settings-card { max-width: 440px; }
+.settings-card .field > span small { font-weight: 400; opacity: 0.75; }
+.settings-actions { display: flex; align-items: center; justify-content: space-between; margin-top: 0.4rem; }
+.settings-saved { color: var(--accent); font-size: 0.88em; margin: 0; background: color-mix(in srgb, var(--accent) 12%, transparent); padding: 0.5em 0.7em; border-radius: var(--radius-sm); }
 
 .field { display: flex; flex-direction: column; gap: 0.3rem; flex: 1; }
 .field > span { font-size: 0.82em; color: var(--text-muted); font-weight: 500; }
@@ -170,6 +174,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .calendar-list li:hover .cal-edit-btn, .cal-edit-btn:focus-visible { opacity: 0.7; }
 .cal-edit-btn:hover { opacity: 1; }
 .sidebar-footer { margin-top: auto; display: flex; align-items: center; justify-content: space-between; padding-top: 0.6rem; border-top: 1px solid var(--border); }
+.sidebar-footer-links { display: flex; align-items: center; gap: 0.7rem; }
 .sidebar-user { font-size: 0.85em; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .main { display: flex; flex-direction: column; min-width: 0; }

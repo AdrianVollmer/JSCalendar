@@ -46,6 +46,7 @@ Environment variables:
 | `JSCAL_DEMO_USERNAME`   | `demo`                        | Pre-filled username, only used when `JSCAL_DEMO_SERVER_URL` is set   |
 | `JSCAL_DEMO_PASSWORD`   | `demo`                        | Pre-filled password, only used when `JSCAL_DEMO_SERVER_URL` is set   |
 | `JSCAL_HOLIDAYS_REGION` | unset                         | German federal state to show a "Public Holidays" pseudo-calendar for (see below); unset means the feature doesn't appear at all |
+| `JSCAL_TIME_FORMAT` | `12h`                             | Clock style for event/hour times: `12h` or `24h`. All four of these are also overridable per-browser from the in-app Settings page |
 
 Then open `http://localhost:8787`, sign in with your JMAP server's URL (or
 just its hostname — `/.well-known/jmap` is appended automatically),
@@ -133,6 +134,17 @@ it manually instead.
   opt-in per deployment (unset by default, so no region is silently assumed)
   and, unlike Birthdays, starts hidden even when configured — toggle it on
   from the sidebar the first time you want it.
+- Settings page (`/app/settings`, linked from the sidebar footer): lets a
+  user override the server's `JSCAL_TIMEZONE`, `JSCAL_HOLIDAYS_REGION`, and
+  a new `JSCAL_TIME_FORMAT` (12-hour vs. 24-hour clock) for their own
+  browser, without touching the server's environment. Saving sets a
+  long-lived cookie (separate from the login session cookie, so it
+  survives signing out and back in) that the server actually reads on every
+  render — this is what makes the override apply with JavaScript disabled,
+  not just a client-side re-skin. A small script also mirrors the saved
+  values into `localStorage`, so they can restore the form if the cookie
+  is ever cleared independently; the cookie remains the source of truth
+  for what's actually rendered.
 
 ## Known limitations
 
@@ -143,9 +155,11 @@ it manually instead.
 - Editing a single occurrence of a recurring event isn't exposed in the UI
   (edits apply to the whole series). `recurrenceOverrides` from other
   clients are still respected when rendering.
-- The display time zone is a single server-wide setting (`JSCAL_TIMEZONE`),
-  not a per-browser one, since there's no client-side JavaScript driving
-  the server-rendered views.
+- The display time zone, time format, and holidays region default to
+  server-wide settings (`JSCAL_TIMEZONE`/`JSCAL_TIME_FORMAT`/
+  `JSCAL_HOLIDAYS_REGION`) and can be overridden per-browser from the
+  Settings page, but there's no automatic detection of the browser's own
+  time zone — you still have to pick it yourself once.
 - Participants/attendees, alerts, and sharing (`Calendar/set` `shareWith`)
   are modeled in `jmap-client` but not surfaced in the UI yet.
 - ICS-subscription URLs aren't persisted to disk (see above), and the ICS

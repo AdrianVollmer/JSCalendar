@@ -63,27 +63,71 @@ pub struct CachedIcsEvents {
 /// Unset or unrecognized means no holidays pseudo-calendar at all — this is
 /// opt-in per deployment, not a default, since public holidays are specific
 /// to wherever the server operator actually is.
-fn parse_german_region(s: &str) -> Option<holiday_de::GermanRegion> {
+pub(crate) fn parse_german_region(s: &str) -> Option<holiday_de::GermanRegion> {
+    ALL_GERMAN_REGIONS
+        .iter()
+        .find(|(name, _)| *name == s)
+        .map(|(_, region)| *region)
+}
+
+/// The inverse of `parse_german_region`.
+pub(crate) fn german_region_name(region: holiday_de::GermanRegion) -> &'static str {
+    ALL_GERMAN_REGIONS
+        .iter()
+        .find(|(_, r)| *r == region)
+        .map(|(name, _)| *name)
+        .unwrap_or("")
+}
+
+/// Every `GermanRegion` paired with the exact string `parse_german_region`
+/// accepts for it — used both there and to populate the settings page's
+/// region picker without duplicating the list.
+pub(crate) const ALL_GERMAN_REGIONS: &[(&str, holiday_de::GermanRegion)] = {
     use holiday_de::GermanRegion::*;
-    Some(match s {
-        "BadenWuerttemberg" => BadenWuerttemberg,
-        "Bayern" => Bayern,
-        "Berlin" => Berlin,
-        "Brandenburg" => Brandenburg,
-        "Bremen" => Bremen,
-        "Hamburg" => Hamburg,
-        "Hessen" => Hessen,
-        "MechlenburgVorpommern" => MechlenburgVorpommern,
-        "Niedersachsen" => Niedersachsen,
-        "NordrheinWestfalen" => NordrheinWestfalen,
-        "RheinlandPfalz" => RheinlandPfalz,
-        "Saarland" => Saarland,
-        "Sachsen" => Sachsen,
-        "SachsenAnhalt" => SachsenAnhalt,
-        "SchleswigHolstein" => SchleswigHolstein,
-        "Thueringen" => Thueringen,
-        _ => return None,
-    })
+    &[
+        ("BadenWuerttemberg", BadenWuerttemberg),
+        ("Bayern", Bayern),
+        ("Berlin", Berlin),
+        ("Brandenburg", Brandenburg),
+        ("Bremen", Bremen),
+        ("Hamburg", Hamburg),
+        ("Hessen", Hessen),
+        ("MechlenburgVorpommern", MechlenburgVorpommern),
+        ("Niedersachsen", Niedersachsen),
+        ("NordrheinWestfalen", NordrheinWestfalen),
+        ("RheinlandPfalz", RheinlandPfalz),
+        ("Saarland", Saarland),
+        ("Sachsen", Sachsen),
+        ("SachsenAnhalt", SachsenAnhalt),
+        ("SchleswigHolstein", SchleswigHolstein),
+        ("Thueringen", Thueringen),
+    ]
+};
+
+/// Which clock style to render event/hour times in (`JSCAL_TIME_FORMAT` env
+/// var, default 12-hour) — overridable per-user from the settings page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TimeFormat {
+    #[default]
+    Twelve,
+    TwentyFour,
+}
+
+impl TimeFormat {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TimeFormat::Twelve => "12h",
+            TimeFormat::TwentyFour => "24h",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "12h" => Some(TimeFormat::Twelve),
+            "24h" => Some(TimeFormat::TwentyFour),
+            _ => None,
+        }
+    }
 }
 
 /// Pre-fills the login form so a demo/test instance (e.g. wired up to
@@ -122,6 +166,7 @@ pub struct AppState {
     /// The German federal state to show public holidays for (`JSCAL_HOLIDAYS_REGION`
     /// env var), or `None` to not offer a holidays pseudo-calendar at all.
     pub holidays_region: Option<holiday_de::GermanRegion>,
+    pub time_format: TimeFormat,
 }
 
 impl AppState {
@@ -142,6 +187,10 @@ impl AppState {
         let holidays_region = std::env::var("JSCAL_HOLIDAYS_REGION")
             .ok()
             .and_then(|s| parse_german_region(&s));
+        let time_format = std::env::var("JSCAL_TIME_FORMAT")
+            .ok()
+            .and_then(|s| TimeFormat::parse(&s))
+            .unwrap_or_default();
         Self {
             sessions: Arc::new(DashMap::new()),
             viewer_tz,
@@ -155,6 +204,7 @@ impl AppState {
                 .build()
                 .unwrap_or_default(),
             holidays_region,
+            time_format,
         }
     }
 }

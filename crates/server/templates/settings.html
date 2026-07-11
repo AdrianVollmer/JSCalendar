@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Settings – JSCalendar{% endblock %}
+{% block body %}
+<main class="login-page">
+  <form class="login-card settings-card" method="post" action="/app/settings" id="settings-form">
+    <div class="login-brand">
+      <img src="/static/icons/icon.svg" alt="" width="40" height="40">
+      <h1>Settings</h1>
+    </div>
+    <p class="login-sub">These are saved for this browser and override the server's defaults.</p>
+
+    {% if saved %}
+    <p class="settings-saved" role="status">Saved.</p>
+    {% endif %}
+
+    <label class="field">
+      <span>Time zone <small>(server default: {{ server_default_timezone }})</small></span>
+      <select name="timezone">
+        {% for tz in timezones %}
+        <option value="{{ tz.value }}" {% if tz.selected %}selected{% endif %}>{{ tz.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label class="field">
+      <span>Time format <small>(server default: {{ server_default_time_format }})</small></span>
+      <select name="time_format">
+        {% for opt in time_formats %}
+        <option value="{{ opt.value }}" {% if opt.selected %}selected{% endif %}>{{ opt.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label class="field">
+      <span>Public holidays <small>(server default: {{ server_default_holidays }})</small></span>
+      <select name="holidays_region">
+        {% for opt in holiday_regions %}
+        <option value="{{ opt.value }}" {% if opt.selected %}selected{% endif %}>{{ opt.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <div class="settings-actions">
+      <a class="btn btn-ghost" href="/app">Back to calendar</a>
+      <button type="submit" class="btn btn-primary">Save</button>
+    </div>
+  </form>
+</main>
+<script>
+(function () {
+  var form = document.getElementById("settings-form");
+  if (!form) return;
+  var hasServerValue = {{ has_override }};
+  try {
+    var saved = localStorage.getItem("jscal_prefs");
+    if (saved && !hasServerValue) {
+      var prefs = JSON.parse(saved);
+      if (prefs.tz) form.timezone.value = prefs.tz;
+      if (prefs.tf) form.time_format.value = prefs.tf;
+      if (prefs.hr) form.holidays_region.value = prefs.hr;
+    }
+  } catch (e) {}
+  form.addEventListener("submit", function () {
+    try {
+      localStorage.setItem("jscal_prefs", JSON.stringify({
+        tz: form.timezone.value,
+        tf: form.time_format.value,
+        hr: form.holidays_region.value,
+      }));
+    } catch (e) {}
+  });
+})();
+</script>
+{% endblock %}

@@ -51,7 +51,10 @@
 
     <div class="sidebar-footer">
       <span class="sidebar-user">{{ username }}</span>
-      <form method="post" action="/logout"><button type="submit" class="btn-link">Sign out</button></form>
+      <span class="sidebar-footer-links">
+        <a class="btn-link" href="/app/settings">Settings</a>
+        <form method="post" action="/logout"><button type="submit" class="btn-link">Sign out</button></form>
+      </span>
     </div>
   </aside>
 
