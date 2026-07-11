@@ -1,3 +1,4 @@
+mod assets;
 mod auth;
 mod error;
 mod ics;
@@ -11,7 +12,7 @@ use std::path::PathBuf;
 use axum::routing::{get, patch, post};
 use axum::Router;
 use tower_http::compression::CompressionLayer;
-use tower_http::services::{ServeDir, ServeFile};
+use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 
 use state::AppState;
@@ -27,6 +28,7 @@ async fn main() {
 
     let state = AppState::new();
     let static_dir = static_dir();
+    assets::init(&static_dir);
 
     let app = Router::new()
         .route("/", get(routes::root))
@@ -84,7 +86,7 @@ async fn main() {
             patch(routes::ics_update).delete(routes::ics_delete_hx),
         )
         // Served at the root so its default scope covers the whole origin.
-        .route_service("/sw.js", ServeFile::new(static_dir.join("sw.js")))
+        .route("/sw.js", get(routes::service_worker))
         .nest_service("/static", ServeDir::new(&static_dir))
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())

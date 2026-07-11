@@ -9,9 +9,9 @@
 <link rel="manifest" href="/static/manifest.json">
 <link rel="icon" href="/static/icons/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
-<link rel="stylesheet" href="/static/app.css">
-<script src="/static/htmx.min.js" defer></script>
-<script src="/static/app.js" defer></script>
+<link rel="stylesheet" href="{{ crate::assets::css_url() }}">
+<script src="{{ crate::assets::htmx_url() }}" defer></script>
+<script src="{{ crate::assets::js_url() }}" defer></script>
 </head>
 <body>
 {% block body %}{% endblock %}

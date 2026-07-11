@@ -693,6 +693,20 @@ pub async fn root() -> Redirect {
     Redirect::to("/app")
 }
 
+/// Serves the service worker with its shell-asset URLs already substituted
+/// with the current content hashes (see `crate::assets`), so a stale
+/// service-worker install can never pin an old `app.css`/`app.js` version
+/// forever — the precache list itself changes whenever those files do.
+pub async fn service_worker() -> impl IntoResponse {
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/javascript; charset=utf-8",
+        )],
+        crate::assets::service_worker_body(),
+    )
+}
+
 pub async fn app_view(
     State(state): State<AppState>,
     session: AuthedSession,

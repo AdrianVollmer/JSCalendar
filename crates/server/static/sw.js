@@ -2,11 +2,11 @@
 // live from the server. This just keeps the UI chrome (CSS/JS/icons)
 // installable and available instantly, and shows something coherent if
 // navigation happens while offline.
-const CACHE = "jscal-shell-v1";
+const CACHE = "jscal-shell-v2";
 const SHELL_ASSETS = [
-  "/static/app.css",
-  "/static/app.js",
-  "/static/htmx.min.js",
+  "/static/app.css?v=__APP_CSS_VERSION__",
+  "/static/app.js?v=__APP_JS_VERSION__",
+  "/static/htmx.min.js?v=__HTMX_VERSION__",
   "/static/manifest.json",
   "/static/offline.html",
   "/static/icons/icon.svg",
