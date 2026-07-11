@@ -1,8 +1,10 @@
 <div class="app" id="app-root">
+  <label for="sidebar-toggle" class="sidebar-backdrop" aria-hidden="true"></label>
   <aside class="sidebar">
     <div class="sidebar-brand">
       <img src="/static/icons/icon.svg" alt="" width="28" height="28">
       <span>JSCalendar</span>
+      <label for="sidebar-toggle" class="btn btn-icon sidebar-close" aria-label="Close menu">✕</label>
     </div>
     {% if is_dated_view %}
     <a class="btn btn-primary btn-block new-event-btn" href="/app/event/new?{{ back_qs }}" hx-get="/app/event/new?{{ back_qs }}" hx-target="#modal-root" hx-swap="innerHTML">+ New event</a>
@@ -63,6 +65,7 @@
 
   <main class="main">
     <header class="topbar">
+      <label for="sidebar-toggle" class="btn btn-icon menu-toggle" aria-label="Open menu">☰</label>
       {% if is_dated_view %}
       <div class="topbar-nav">
         <a class="btn btn-ghost" href="{{ today_href }}" hx-get="{{ today_href }}" hx-target="#app-root" hx-push-url="true" hx-swap="outerHTML">Today</a>
@@ -76,5 +79,10 @@
     <div id="view" class="view-container">
       {{ body|safe }}
     </div>
+    {% if is_dated_view %}
+    <a class="btn btn-primary btn-icon fab-new" href="/app/event/new?{{ back_qs }}" hx-get="/app/event/new?{{ back_qs }}" hx-target="#modal-root" hx-swap="innerHTML" aria-label="New event">+</a>
+    {% else %}
+    <a class="btn btn-primary btn-icon fab-new" href="/app/contact/new?{{ back_qs }}" hx-get="/app/contact/new?{{ back_qs }}" hx-target="#modal-root" hx-swap="innerHTML" aria-label="New contact">+</a>
+    {% endif %}
   </main>
 </div>

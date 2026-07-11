@@ -196,18 +196,21 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .sidebar-footer-links { display: flex; align-items: center; justify-content: space-between; }
 .sidebar-user { font-size: 0.85em; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.main { display: flex; flex-direction: column; min-width: 0; }
+.main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .topbar { display: flex; align-items: center; gap: 1rem; padding: 0.8rem 1.2rem; border-bottom: 1px solid var(--border); }
 .topbar-nav { display: flex; align-items: center; gap: 0.2rem; }
-.topbar-title { font-size: 1.15rem; font-weight: 600; flex: 1; }
-.view-container { flex: 1; overflow: auto; position: relative; }
+.topbar-title { font-size: 1.15rem; font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.view-container { flex: 1; min-height: 0; overflow: auto; position: relative; }
+.sidebar-toggle-checkbox { display: none; }
+.sidebar-close, .menu-toggle, .fab-new { display: none; }
+.sidebar-backdrop { display: none; }
 
 /* ---- month view ---- */
 .month-view { display: flex; flex-direction: column; height: 100%; }
 .month-weekdays { display: grid; grid-template-columns: repeat(7, 1fr); border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .month-weekday { padding: 0.5em; text-align: center; font-size: 0.8em; color: var(--text-muted); font-weight: 600; }
 .month-grid { flex: 1; display: grid; grid-template-columns: repeat(7, 1fr); grid-auto-rows: 1fr; }
-.month-cell { border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 0.35rem; display: flex; flex-direction: column; gap: 0.2rem; min-height: 90px; }
+.month-cell { border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 0.35rem; display: flex; flex-direction: column; gap: 0.2rem; min-height: 90px; min-width: 0; }
 .month-cell.outside { background: var(--bg-sunken); }
 .month-cell.outside .month-daynum { color: var(--text-faint); }
 .month-cell.today { background: var(--today-bg); }
@@ -232,17 +235,17 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 }
 .week-view .time-view-header, .week-view .time-view-allday { grid-template-columns: 56px repeat(7, 1fr); }
 .time-gutter-spacer { padding: 0.4em; font-size: 0.72em; color: var(--text-faint); display: flex; align-items: flex-end; justify-content: center; }
-.time-day-header { padding: 0.5em; text-align: center; font-size: 0.85em; font-weight: 600; border-left: 1px solid var(--border); display: block; }
+.time-day-header { padding: 0.5em; text-align: center; font-size: 0.85em; font-weight: 600; border-left: 1px solid var(--border); display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .time-day-header:hover { background: var(--bg-sunken); }
 .time-day-header.today { color: var(--accent); }
 .time-view-allday { min-height: 2.2em; }
-.time-allday-col { border-left: 1px solid var(--border); padding: 0.2rem; display: flex; flex-direction: column; gap: 0.15rem; }
+.time-allday-col { border-left: 1px solid var(--border); padding: 0.2rem; display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
 .time-grid-scroll { flex: 1; overflow-y: auto; }
 .time-grid { display: grid; grid-template-columns: 56px repeat(7, 1fr); position: relative; }
 .time-grid.time-grid-single { grid-template-columns: 56px 1fr; }
 .time-gutter { display: flex; flex-direction: column; }
 .time-gutter-row { height: var(--hour-height); font-size: 0.72em; color: var(--text-faint); text-align: right; padding-right: 0.5em; transform: translateY(-0.6em); }
-.time-column { position: relative; border-left: 1px solid var(--border); }
+.time-column { position: relative; border-left: 1px solid var(--border); min-width: 0; }
 .hour-line { height: var(--hour-height); border-bottom: 1px solid var(--border); }
 .timed-event {
   position: absolute; overflow: hidden; border-radius: 6px; padding: 0.25em 0.5em;
@@ -322,12 +325,54 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .event-form-footer { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.4rem; }
 .event-form-footer .spacer { flex: 1; }
 
-/* ---- misc ---- */
+/* ---- responsive: collapse the sidebar into an off-canvas drawer ---- */
+/* Pure CSS (checkbox-hack) so the drawer works with JavaScript disabled:
+   #sidebar-toggle lives in app_shell.html, as a sibling *before* #app-root,
+   so it survives every htmx swap of #app-root (nav links replace the .app
+   div's outerHTML but never touch its preceding siblings), which is what
+   keeps the drawer's open/closed state stable across in-app navigation. */
 @media (max-width: 820px) {
-  .app { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
-  .sidebar { flex-direction: row; flex-wrap: wrap; border-right: none; border-bottom: 1px solid var(--border); padding: 0.6rem; }
-  .sidebar-brand, .sidebar-section h2, .sidebar-footer { display: none; }
-  .new-event-btn { order: -1; width: auto; }
-  .view-switch { flex-direction: row; }
-  .calendar-list { flex-direction: row; flex-wrap: wrap; }
+  /* The sidebar becomes a fixed-position overlay (see below), so it no
+     longer occupies grid space; .main just fills the whole viewport. */
+  .app { display: block; height: 100vh; }
+  .main { height: 100%; }
+  .menu-toggle { display: inline-flex; }
+  .sidebar-close { display: inline-flex; margin-left: auto; }
+  .sidebar {
+    position: fixed; inset: 0 auto 0 0; z-index: 60; width: min(84vw, 300px);
+    border-right: 1px solid var(--border); box-shadow: var(--shadow-lg);
+    transform: translateX(-100%); transition: transform 200ms var(--ease);
+  }
+  .sidebar-brand { display: flex; }
+  .sidebar-section h2 { display: block; }
+  .sidebar-footer { display: flex; }
+  .new-event-btn { width: 100%; }
+  .view-switch { flex-direction: column; }
+  .calendar-list { flex-direction: column; flex-wrap: nowrap; }
+  .sidebar-toggle-checkbox:checked ~ .app .sidebar { transform: translateX(0); }
+  .sidebar-backdrop {
+    display: none; position: fixed; inset: 0; z-index: 59;
+    background: rgba(10, 12, 20, 0.45);
+  }
+  .sidebar-toggle-checkbox:checked ~ .app .sidebar-backdrop { display: block; }
+  /* The sidebar's own "+ New event"/"+ New contact" button is off-canvas
+     with the rest of the drawer, so mobile gets a floating twin of it
+     (same href/label) that's always reachable without opening the menu. */
+  .fab-new {
+    display: flex; position: fixed; right: 1.1rem; bottom: 1.1rem; z-index: 40;
+    width: 3.2rem; height: 3.2rem; border-radius: 50%; font-size: 1.5rem;
+    align-items: center; justify-content: center; box-shadow: var(--shadow-lg);
+  }
+}
+@media (min-width: 480px) and (max-width: 820px) {
+  .month-cell { min-height: 70px; }
+}
+@media (max-width: 479px) {
+  /* Cell content shrinks to fit rather than needing horizontal scroll: at
+     this width there isn't room for both a time and a title on one line,
+     so the time is dropped and only the (truncated) title remains. */
+  .month-cell { min-height: 56px; padding: 0.2rem; }
+  .event-pill { font-size: 0.72em; padding: 0.1em 0.3em; }
+  .event-pill .event-time { display: none; }
+  .month-daynum { width: 1.6em; height: 1.6em; font-size: 0.8em; }
 }
