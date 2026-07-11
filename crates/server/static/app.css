@@ -223,8 +223,12 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
   font-size: 0.78em; white-space: nowrap; overflow: hidden;
 }
 .event-pill:hover { background: color-mix(in srgb, var(--cal-color) 30%, var(--bg-elevated)); }
-.event-pill .event-title { overflow: hidden; text-overflow: ellipsis; }
-.event-pill .event-time { color: var(--text-muted); flex-shrink: 0; }
+/* Time has a much higher flex-shrink factor than title, so as a column
+   narrows, time gives up its space first (shrinking away to nothing) and
+   title only starts to ellipsize once time is already gone — a legible
+   title beats a legible time when there isn't room for both. */
+.event-pill .event-title { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.event-pill .event-time { color: var(--text-muted); flex-shrink: 20; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .event-more { font-size: 0.76em; color: var(--text-muted); padding: 0.1em 0.4em; }
 .event-more:hover { color: var(--text); }
 
@@ -253,8 +257,12 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
   font-size: 0.78em; display: flex; flex-direction: column; box-shadow: var(--shadow); z-index: 1;
 }
 .timed-event:hover { background: color-mix(in srgb, var(--cal-color) 34%, var(--bg-elevated)); z-index: 2; }
-.timed-event .event-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.timed-event .event-time { color: var(--text-muted); font-size: 0.9em; }
+/* Title (first, top) is what a short/narrow event box keeps: the template
+   only renders .event-time at all when there's genuinely room for a
+   second line (see view_week.html/view_day.html), so a 15-minute meeting
+   shows its title instead of just "9:00–9:15 AM". */
+.timed-event .event-title { flex-shrink: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.timed-event .event-time { flex-shrink: 0; color: var(--text-muted); font-size: 0.9em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---- agenda view ---- */
 .agenda-view { padding: 1.2rem 1.5rem; max-width: 720px; margin: 0 auto; }

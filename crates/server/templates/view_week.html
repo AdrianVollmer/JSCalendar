@@ -31,14 +31,14 @@
         {% for h in hours %}<div class="hour-line"></div>{% endfor %}
         {% for ev in day.timed_events %}
         {% if ev.read_only %}
-        <span class="timed-event readonly-pill" style="top: {{ ev.top_px }}px; height: {{ ev.height_px }}px; left: {{ ev.left_pct }}%; width: {{ ev.width_pct }}%; --cal-color: {{ ev.color }};">
+        <span class="timed-event readonly-pill" style="top: {{ ev.top_px }}px; height: {{ ev.height_px }}px; left: {{ ev.left_pct }}%; width: {{ ev.width_pct }}%; --cal-color: {{ ev.color }};" title="{{ ev.title }} ({{ ev.time_label }})">
           <span class="event-title">{{ ev.title }}</span>
-          <span class="event-time">{{ ev.time_label }}</span>
+          {% if ev.height_px >= 36.0 %}<span class="event-time">{{ ev.time_label }}</span>{% endif %}
         </span>
         {% else %}
-        <a class="timed-event" style="top: {{ ev.top_px }}px; height: {{ ev.height_px }}px; left: {{ ev.left_pct }}%; width: {{ ev.width_pct }}%; --cal-color: {{ ev.color }};" data-event-id="{{ ev.id }}" href="{{ ev.edit_href }}" hx-get="{{ ev.edit_href }}" hx-target="#modal-root" hx-swap="innerHTML">
+        <a class="timed-event" style="top: {{ ev.top_px }}px; height: {{ ev.height_px }}px; left: {{ ev.left_pct }}%; width: {{ ev.width_pct }}%; --cal-color: {{ ev.color }};" data-event-id="{{ ev.id }}" href="{{ ev.edit_href }}" hx-get="{{ ev.edit_href }}" hx-target="#modal-root" hx-swap="innerHTML" title="{{ ev.title }} ({{ ev.time_label }})">
           <span class="event-title">{{ ev.title }}</span>
-          <span class="event-time">{{ ev.time_label }}</span>
+          {% if ev.height_px >= 36.0 %}<span class="event-time">{{ ev.time_label }}</span>{% endif %}
         </a>
         {% endif %}
         {% endfor %}
