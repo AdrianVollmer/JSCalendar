@@ -11,15 +11,15 @@ month/week/day/agenda views, plus [JSContact](https://www.rfc-editor.org/rfc/rfc
 
 ## Architecture
 
-- **`crates/jmap-client`** — a standalone JMAP + JSCalendar/JSContact
-  library: session discovery, the Core request/response envelope,
+- **`crates/jmap-client`**: a standalone JMAP + JSCalendar/JSContact
+  library covering session discovery, the Core request/response envelope,
   `Calendar`/`CalendarEvent` and `AddressBook`/`Card` (contacts) data types,
   recurrence-rule expansion, birthday-anniversary expansion, and IANA time
   zone conversion. No web framework dependency; usable on its own.
-- **`crates/server`** — an [axum](https://github.com/tokio-rs/axum) web app
+- **`crates/server`**: an [axum](https://github.com/tokio-rs/axum) web app
   that renders HTML server-side with [Askama](https://github.com/askama-rs/askama)
   templates and layers [htmx](https://htmx.org) on top for snappy partial
-  updates. There is no SPA framework and no build step for the frontend —
+  updates. There is no SPA framework and no build step for the frontend:
   every page and every htmx fragment is plain HTML, so the app is fully
   functional with JavaScript disabled (forms submit normally, links
   navigate normally); htmx just intercepts the same links/forms to swap
@@ -57,18 +57,19 @@ Environment variables:
 Setting `JSCAL_SERVER_URL` plus either `JSCAL_TOKEN`(`_FILE`) or
 `JSCAL_USERNAME`/`JSCAL_PASSWORD`(`_FILE`) makes the server transparently
 authenticate every visitor who doesn't already have their own session,
-instead of showing the login page — for a personal deployment where
-there's only one JMAP account and typing credentials into a form (or even
-seeing a login screen) is pure friction. The connection is established
-once and its `Client` is shared by every visitor after that; the `/login`
-page still works if you ever want to sign in as a different account
-manually, and "Sign out" drops the cached auto-login connection (forcing a
-fresh reconnect on the next visit — useful after rotating credentials).
+instead of showing the login page. It's meant for a personal deployment
+where there's only one JMAP account and typing credentials into a form (or
+even seeing a login screen) is pure friction. The connection is
+established once and its `Client` is shared by every visitor after that;
+the `/login` page still works if you ever want to sign in as a different
+account manually, and "Sign out" drops the cached auto-login connection,
+forcing a fresh reconnect on the next visit (useful after rotating
+credentials).
 
 This is a different mechanism from `JSCAL_DEMO_*` above, which only
-pre-fills the login *form* for a human to still submit — it exists for the
-`make demo` mock-server target and intentionally never bypasses the login
-step.
+pre-fills the login *form* for a human to still submit. That one exists
+for the `make demo` mock-server target and intentionally never bypasses
+the login step.
 
 For the credential itself, prefer the `_FILE` variant
 (`JSCAL_PASSWORD_FILE=/run/secrets/jscal_password`, pointing at a Docker/
@@ -82,14 +83,14 @@ committing the value to a compose file that lands in version control,
 etc.).
 
 Then open `http://localhost:8787`, sign in with your JMAP server's URL (or
-just its hostname — `/.well-known/jmap` is appended automatically),
+just its hostname; `/.well-known/jmap` is appended automatically),
 username/password, or an API token.
 
 ## Trying it without a JMAP account
 
-`crates/mock-jmap-server` is a small in-memory JMAP server — calendars,
-recurring events, and contacts with birthdays, seeded relative to today so
-it always looks current — that accepts any credentials. It's a real
+`crates/mock-jmap-server` is a small in-memory JMAP server that accepts
+any credentials, with calendars, recurring events, and contacts with
+birthdays, seeded relative to today so it always looks current. It's a real
 implementation of the wire protocol (session discovery, `Calendar`/
 `CalendarEvent`/`AddressBook`/`ContactCard`, the `CalendarEvent/query`
 result-reference chaining), not a UI fake, so it exercises the same
@@ -134,14 +135,14 @@ it manually instead.
   persisted in `localStorage`).
 - PWA: web app manifest, icons, and a service worker that caches the static
   app shell for instant loads and offline resilience (calendar data itself
-  is always live — there's no offline data cache, since it belongs to your
+  is always live; there's no offline data cache, since it belongs to your
   JMAP server).
 - Contacts: a "Contacts" view (`AddressBook/get` + `ContactCard/get`) listing
   name/email, with a live-filter text field (matches name or email, updates
   as you type via htmx, degrades to submit-on-search without JavaScript) and
   create/edit/delete through the same dialog-form pattern as events
-  (`ContactCard/set`). A **Birthdays** entry in the sidebar — toggle it like
-  any other calendar — overlays each contact's `birth` anniversary (RFC 9553
+  (`ContactCard/set`). A **Birthdays** entry in the sidebar, toggled like
+  any other calendar, overlays each contact's `birth` anniversary (RFC 9553
   `anniversaries`) as a recurring, non-editable all-day item across
   month/week/day/agenda views, with the contact's age shown when their
   birth year is known. Both are hidden automatically if the JMAP server
@@ -150,11 +151,11 @@ it manually instead.
   (separate from the real "Calendars" section) lets you add any public
   `.ics` URL as a read-only overlay calendar, with its own name/color and
   the same visibility toggle as everything else. These aren't JMAP
-  calendars — the app has no database of its own, so subscriptions live
-  only in memory for the running server process (lost on restart, same as
-  login sessions) — each feed is fetched and parsed on demand and cached
-  for `ICS_CACHE_TTL_SECS` (30 minutes) before being re-fetched, and a
-  small ⚠ badge appears next to a subscription if its last fetch failed.
+  calendars, since the app has no database of its own, so subscriptions
+  live only in memory for the running server process (lost on restart,
+  same as login sessions). Each feed is fetched and parsed on demand and
+  cached for `ICS_CACHE_TTL_SECS` (30 minutes) before being re-fetched, and
+  a small ⚠ badge appears next to a subscription if its last fetch failed.
   The parser (`server/src/ics.rs`) covers `SUMMARY`/`DTSTART`/`DTEND`/
   `DURATION`, a common `RRULE` subset (`FREQ`/`INTERVAL`/`COUNT`/`UNTIL`/
   `BYDAY`/`BYMONTHDAY`/`BYMONTH`), and `EXDATE`; unrecognized recurrence
@@ -163,9 +164,9 @@ it manually instead.
 - Public holidays: setting `JSCAL_HOLIDAYS_REGION` to a German federal state
   (e.g. `BadenWuerttemberg`) adds a read-only "Public Holidays"
   pseudo-calendar computed with the [`holiday_de`](https://crates.io/crates/holiday_de)
-  crate — no network fetch, no stale data, correct for any year. It's
+  crate: no network fetch, no stale data, correct for any year. It's
   opt-in per deployment (unset by default, so no region is silently assumed)
-  and, unlike Birthdays, starts hidden even when configured — toggle it on
+  and, unlike Birthdays, starts hidden even when configured; toggle it on
   from the sidebar the first time you want it.
 - Settings page (`/app/settings`, linked from the sidebar footer): lets a
   user override the server's `JSCAL_TIMEZONE`, `JSCAL_HOLIDAYS_REGION`, and
@@ -173,11 +174,11 @@ it manually instead.
   browser, without touching the server's environment. Saving sets a
   long-lived cookie (separate from the login session cookie, so it
   survives signing out and back in) that the server actually reads on every
-  render — this is what makes the override apply with JavaScript disabled,
-  not just a client-side re-skin. A small script also mirrors the saved
-  values into `localStorage`, so they can restore the form if the cookie
-  is ever cleared independently; the cookie remains the source of truth
-  for what's actually rendered.
+  render, which is what makes the override apply with JavaScript disabled
+  instead of just being a client-side re-skin. A small script also mirrors
+  the saved values into `localStorage`, so they can restore the form if the
+  cookie is ever cleared independently; the cookie remains the source of
+  truth for what's actually rendered.
 - Auto-login (`JSCAL_SERVER_URL` + credentials, see "Running it" above):
   skips the login page entirely for single-tenant deployments, with the
   password/token preferably supplied via a mounted secret file
@@ -189,7 +190,7 @@ it manually instead.
   the one connection established from `JSCAL_SERVER_URL`, with no
   per-visitor identity or isolation. It's meant for "just me, on my own
   network/VPN," not for putting a shared calendar in front of multiple
-  people who should see different accounts — use the normal login flow
+  people who should see different accounts; use the normal login flow
   (or your own auth in front of the app) for that.
 - The event editor only builds simple recurrence rules (a single frequency,
   interval, and end condition); it doesn't expose `byDay` weekday pickers or
@@ -202,25 +203,25 @@ it manually instead.
   server-wide settings (`JSCAL_TIMEZONE`/`JSCAL_TIME_FORMAT`/
   `JSCAL_HOLIDAYS_REGION`) and can be overridden per-browser from the
   Settings page, but there's no automatic detection of the browser's own
-  time zone — you still have to pick it yourself once.
+  time zone; you still have to pick it yourself once.
 - Participants/attendees, alerts, and sharing (`Calendar/set` `shareWith`)
   are modeled in `jmap-client` but not surfaced in the UI yet.
 - ICS-subscription URLs aren't persisted to disk (see above), and the ICS
-  parser ignores `VTIMEZONE` blocks — a `DTSTART` with a `TZID` parameter
+  parser ignores `VTIMEZONE` blocks: a `DTSTART` with a `TZID` parameter
   but no trailing `Z` is treated as floating rather than resolved against
   the named zone. `VALARM`, `ATTENDEE`, and per-instance `RECURRENCE-ID`
   overrides in a feed are ignored entirely.
 - The built-in public-holidays pseudo-calendar only covers Germany (via
   `holiday_de`, one `GermanRegion` per deployment). There's no well-maintained
   Rust equivalent of Python's `holidays` package to draw on for other
-  countries as of this writing — the closest match (`holidays` on crates.io)
+  countries as of this writing. The closest match (`holidays` on crates.io)
   bakes in a static dataset that stops at 2023 and hasn't been updated since
   early 2023, so it can't produce correct dates for the current year, let
   alone future ones. A non-German deployment that wants this feature today
   has to fall back to the ICS-subscription mechanism above with a
   region-specific public holiday `.ics` feed instead.
 - Contacts have no address-book management UI (creating/renaming address
-  books), and editing a contact only exposes name, one email, and birthday —
+  books), and editing a contact only exposes name, one email, and birthday,
   not the full JSContact object model. There's no JMAP filter for "has a
   birthday in this range" or "name/email contains", so `ContactCard/get`
   always fetches the whole address book (requesting only
