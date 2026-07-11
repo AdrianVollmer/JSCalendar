@@ -14,6 +14,10 @@ pub const BIRTHDAY_COLOR: &str = "#f43f5e";
 /// birthdays aren't a real JMAP calendar, but reusing the same "which ids
 /// are visible" URL state means no separate toggle plumbing is needed.
 pub const BIRTHDAY_PSEUDO_ID: &str = "birthdays";
+pub const HOLIDAYS_COLOR: &str = "#16a34a";
+/// Synthetic calendar id for the (optional, server-configured) public
+/// holidays pseudo-calendar — same trick as `BIRTHDAY_PSEUDO_ID`.
+pub const HOLIDAYS_PSEUDO_ID: &str = "holidays";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ViewKind {
@@ -281,6 +285,22 @@ fn birthday_event_view(occ: &jmap_client::jscontact::BirthdayOccurrence) -> Even
     }
 }
 
+fn holiday_event_view(date: NaiveDate, name: &str) -> EventView {
+    EventView {
+        id: format!("holiday-{}", date.format("%Y-%m-%d")),
+        title: format!("\u{1f1e9}\u{1f1ea} {name}"),
+        color: HOLIDAYS_COLOR.to_string(),
+        all_day: true,
+        read_only: true,
+        time_label: "Public holiday".to_string(),
+        edit_href: String::new(),
+        top_px: 0.0,
+        height_px: HOUR_HEIGHT_PX,
+        left_pct: 0.0,
+        width_pct: 100.0,
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct DayCell {
     pub day_num: u32,
@@ -504,6 +524,9 @@ pub struct BuildInputs<'a> {
     pub events: &'a [CalendarEvent],
     pub calendars: &'a [Calendar],
     pub birthdays: &'a [jmap_client::jscontact::BirthdayOccurrence],
+    /// (date, holiday name) pairs for the optional, server-configured
+    /// public-holidays pseudo-calendar.
+    pub holidays: &'a [(NaiveDate, String)],
     /// Configured color for each ICS-subscription pseudo calendar id,
     /// since those aren't real `Calendar` objects `calendar_color` can
     /// look up.
@@ -519,6 +542,15 @@ fn birthdays_on(inputs: &BuildInputs, date: NaiveDate) -> Vec<EventView> {
         .iter()
         .filter(|b| b.date == date)
         .map(birthday_event_view)
+        .collect()
+}
+
+fn holidays_on(inputs: &BuildInputs, date: NaiveDate) -> Vec<EventView> {
+    inputs
+        .holidays
+        .iter()
+        .filter(|(d, _)| *d == date)
+        .map(|(d, name)| holiday_event_view(*d, name))
         .collect()
 }
 
@@ -546,6 +578,7 @@ pub fn build_month(inputs: &BuildInputs) -> MonthView {
         let mut week = Vec::new();
         for _ in 0..7 {
             let mut day_events: Vec<EventView> = birthdays_on(inputs, cursor);
+            day_events.extend(holidays_on(inputs, cursor));
             day_events.extend(
                 localized
                     .iter()
@@ -595,6 +628,7 @@ pub fn build_week(inputs: &BuildInputs) -> WeekView {
     for i in 0..7 {
         let date = start + ChronoDuration::days(i);
         let mut all_day: Vec<EventView> = birthdays_on(inputs, date);
+        all_day.extend(holidays_on(inputs, date));
         let mut timed: Vec<EventView> = Vec::new();
         for l in localized.iter().filter(|l| l.start.date() == date) {
             let ev = to_event_view(l, inputs.calendars, inputs.ics_colors);
@@ -640,6 +674,7 @@ pub fn build_day(inputs: &BuildInputs) -> DayViewModel {
     );
 
     let mut all_day: Vec<EventView> = birthdays_on(inputs, date);
+    all_day.extend(holidays_on(inputs, date));
     let mut timed: Vec<EventView> = Vec::new();
     for l in &localized {
         let ev = to_event_view(l, inputs.calendars, inputs.ics_colors);
@@ -687,13 +722,19 @@ pub fn build_agenda(inputs: &BuildInputs) -> AgendaView {
         range_end,
     );
 
-    // Birthdays are listed first among that day's events (stable sort keeps
-    // them ahead of same-date real events).
+    // Birthdays and holidays are listed first among that day's events
+    // (stable sort keeps them ahead of same-date real events).
     let mut combined: Vec<(NaiveDate, EventView)> = inputs
         .birthdays
         .iter()
         .map(|b| (b.date, birthday_event_view(b)))
         .collect();
+    combined.extend(
+        inputs
+            .holidays
+            .iter()
+            .map(|(d, name)| (*d, holiday_event_view(*d, name))),
+    );
     combined.extend(localized.iter().map(|l| {
         (
             l.start.date(),

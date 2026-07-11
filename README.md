@@ -45,6 +45,7 @@ Environment variables:
 | `JSCAL_DEMO_SERVER_URL` | unset                         | If set, pre-fills the login form's server URL (see below)            |
 | `JSCAL_DEMO_USERNAME`   | `demo`                        | Pre-filled username, only used when `JSCAL_DEMO_SERVER_URL` is set   |
 | `JSCAL_DEMO_PASSWORD`   | `demo`                        | Pre-filled password, only used when `JSCAL_DEMO_SERVER_URL` is set   |
+| `JSCAL_HOLIDAYS_REGION` | unset                         | German federal state to show a "Public Holidays" pseudo-calendar for (see below); unset means the feature doesn't appear at all |
 
 Then open `http://localhost:8787`, sign in with your JMAP server's URL (or
 just its hostname — `/.well-known/jmap` is appended automatically),
@@ -125,6 +126,13 @@ it manually instead.
   `BYDAY`/`BYMONTHDAY`/`BYMONTH`), and `EXDATE`; unrecognized recurrence
   shapes fall back to showing just the first occurrence rather than
   guessing.
+- Public holidays: setting `JSCAL_HOLIDAYS_REGION` to a German federal state
+  (e.g. `BadenWuerttemberg`) adds a read-only "Public Holidays"
+  pseudo-calendar computed with the [`holiday_de`](https://crates.io/crates/holiday_de)
+  crate — no network fetch, no stale data, correct for any year. It's
+  opt-in per deployment (unset by default, so no region is silently assumed)
+  and, unlike Birthdays, starts hidden even when configured — toggle it on
+  from the sidebar the first time you want it.
 
 ## Known limitations
 
@@ -145,6 +153,15 @@ it manually instead.
   but no trailing `Z` is treated as floating rather than resolved against
   the named zone. `VALARM`, `ATTENDEE`, and per-instance `RECURRENCE-ID`
   overrides in a feed are ignored entirely.
+- The built-in public-holidays pseudo-calendar only covers Germany (via
+  `holiday_de`, one `GermanRegion` per deployment). There's no well-maintained
+  Rust equivalent of Python's `holidays` package to draw on for other
+  countries as of this writing — the closest match (`holidays` on crates.io)
+  bakes in a static dataset that stops at 2023 and hasn't been updated since
+  early 2023, so it can't produce correct dates for the current year, let
+  alone future ones. A non-German deployment that wants this feature today
+  has to fall back to the ICS-subscription mechanism above with a
+  region-specific public holiday `.ics` feed instead.
 - Contacts have no address-book management UI (creating/renaming address
   books), and editing a contact only exposes name, one email, and birthday —
   not the full JSContact object model. There's no JMAP filter for "has a

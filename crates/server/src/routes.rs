@@ -39,6 +39,7 @@ fn resolve_view_params(
     today: NaiveDate,
     has_contacts: bool,
     ics_ids: &[String],
+    has_holidays: bool,
 ) -> ViewParams {
     let view = raw
         .view
@@ -55,6 +56,9 @@ fn resolve_view_params(
         all_calendar_ids.push(view::BIRTHDAY_PSEUDO_ID.to_string());
     }
     all_calendar_ids.extend(ics_ids.iter().cloned());
+    if has_holidays {
+        all_calendar_ids.push(view::HOLIDAYS_PSEUDO_ID.to_string());
+    }
     let visible: HashSet<String> = match &raw.cal {
         Some(s) => s
             .split(',')
@@ -71,6 +75,9 @@ fn resolve_view_params(
                 v.insert(view::BIRTHDAY_PSEUDO_ID.to_string());
             }
             v.extend(ics_ids.iter().cloned());
+            // Not inserted into the default-visible set even when
+            // configured — holidays are opt-in, shown only once the user
+            // explicitly toggles them on.
             v
         }
     };
@@ -173,6 +180,25 @@ async fn fetch_birthdays(
         range_start.date(),
         range_end.date(),
     ))
+}
+
+fn fetch_holidays(state: &AppState, params: &ViewParams) -> Vec<(NaiveDate, String)> {
+    if !params.visible.contains(view::HOLIDAYS_PSEUDO_ID) {
+        return Vec::new();
+    }
+    let Some(region) = state.holidays_region else {
+        return Vec::new();
+    };
+    let (range_start, range_end) = view::display_range(params);
+    let mut out = Vec::new();
+    for year in range_start.year()..=range_end.year() {
+        for (date, holiday) in region.holiday_dates_in_year(year) {
+            if date >= range_start.date() && date < range_end.date() {
+                out.push((date, holiday.description().to_string()));
+            }
+        }
+    }
+    out
 }
 
 /// Keyed the same way as `contacts_cache_key`, but against the primary
@@ -413,11 +439,13 @@ async fn render_fragment(
     let mut events = fetch_events(session, state, params).await?;
     events.extend(fetch_ics_events(state, session, params).await);
     let birthdays = fetch_birthdays(state, session, params).await?;
+    let holidays = fetch_holidays(state, params);
     let ics_colors = ics_colors_for(state, session);
     let inputs = view::BuildInputs {
         events: &events,
         calendars,
         birthdays: &birthdays,
+        holidays: &holidays,
         ics_colors: &ics_colors,
         viewer_tz: state.viewer_tz,
         params,
@@ -482,6 +510,7 @@ fn sidebar_calendars(
     calendars: &[Calendar],
     params: &ViewParams,
     has_contacts: bool,
+    has_holidays: bool,
 ) -> Vec<SidebarCalendarVM> {
     let back_qs = params.query_string(params.view, params.date);
     let mut items: Vec<SidebarCalendarVM> = calendars
@@ -507,6 +536,17 @@ fn sidebar_calendars(
             color: view::BIRTHDAY_COLOR.to_string(),
             visible: params.visible.contains(view::BIRTHDAY_PSEUDO_ID),
             toggle_href: params.toggle_href(view::BIRTHDAY_PSEUDO_ID),
+            edit_href: None,
+            error: None,
+        });
+    }
+    if has_holidays {
+        items.push(SidebarCalendarVM {
+            id: view::HOLIDAYS_PSEUDO_ID.to_string(),
+            name: "Public Holidays".to_string(),
+            color: view::HOLIDAYS_COLOR.to_string(),
+            visible: params.visible.contains(view::HOLIDAYS_PSEUDO_ID),
+            toggle_href: params.toggle_href(view::HOLIDAYS_PSEUDO_ID),
             edit_href: None,
             error: None,
         });
@@ -674,7 +714,12 @@ async fn build_shell_parts(
         title: params.title(today),
         username: session.username.clone(),
         is_dated_view: params.view.is_dated(),
-        calendars: sidebar_calendars(calendars, params, has_contacts),
+        calendars: sidebar_calendars(
+            calendars,
+            params,
+            has_contacts,
+            state.holidays_region.is_some(),
+        ),
         ics_subscriptions: sidebar_ics_subscriptions(
             state,
             &ics_subscriptions_for(state, session),
@@ -721,6 +766,7 @@ pub async fn app_view(
         today,
         session.contacts_account_id.is_some(),
         &ics_subscription_ids(&state, &session),
+        state.holidays_region.is_some(),
     );
 
     let parts = build_shell_parts(&session, &state, &calendars, &params, today).await?;
@@ -964,6 +1010,7 @@ pub async fn event_new_form(
         today,
         session.contacts_account_id.is_some(),
         &ics_subscription_ids(&state, &session),
+        state.holidays_region.is_some(),
     );
     let form = blank_form(&calendars, &params, state.viewer_tz, None);
     let modal_html = form
@@ -994,6 +1041,7 @@ pub async fn event_edit_form(
         today,
         session.contacts_account_id.is_some(),
         &ics_subscription_ids(&state, &session),
+        state.holidays_region.is_some(),
     );
     let events = session
         .client
@@ -1158,6 +1206,7 @@ async fn mutation_response(
             today,
             session.contacts_account_id.is_some(),
             &ics_subscription_ids(state, session),
+            state.holidays_region.is_some(),
         );
         let fragment = render_fragment(session, state, &calendars, &params, today).await?;
         let body =
@@ -1257,6 +1306,7 @@ async fn render_form_error(
         today,
         session.contacts_account_id.is_some(),
         &ics_subscription_ids(state, session),
+        state.holidays_region.is_some(),
     );
     let mut tpl = blank_form(&calendars, &params, state.viewer_tz, Some(message));
     tpl.is_edit = is_edit;
@@ -1453,6 +1503,7 @@ pub async fn contact_new_form(
         today,
         session.contacts_account_id.is_some(),
         &ics_subscription_ids(&state, &session),
+        state.holidays_region.is_some(),
     );
     let address_books = match &session.contacts_account_id {
         Some(id) => session.client.get_address_books(id).await?,
@@ -1487,6 +1538,7 @@ pub async fn contact_edit_form(
         today,
         session.contacts_account_id.is_some(),
         &ics_subscription_ids(&state, &session),
+        state.holidays_region.is_some(),
     );
     let contacts_account_id = session
         .contacts_account_id
@@ -1610,6 +1662,7 @@ async fn render_contact_form_error(
         today,
         session.contacts_account_id.is_some(),
         &ics_subscription_ids(state, session),
+        state.holidays_region.is_some(),
     );
     let address_books = match &session.contacts_account_id {
         Some(id) => session.client.get_address_books(id).await?,
@@ -1832,6 +1885,7 @@ pub async fn calendar_new_form(
         today,
         session.contacts_account_id.is_some(),
         &ics_subscription_ids(&state, &session),
+        state.holidays_region.is_some(),
     );
     let form = blank_calendar_form(&params, None);
     let modal_html = form
@@ -1862,6 +1916,7 @@ pub async fn calendar_edit_form(
         today,
         session.contacts_account_id.is_some(),
         &ics_subscription_ids(&state, &session),
+        state.holidays_region.is_some(),
     );
     let calendar = calendars
         .iter()
@@ -1934,6 +1989,7 @@ async fn render_calendar_form_error(
         today,
         session.contacts_account_id.is_some(),
         &ics_subscription_ids(state, session),
+        state.holidays_region.is_some(),
     );
     let mut tpl = blank_calendar_form(&params, Some(message));
     tpl.is_edit = is_edit;
@@ -1974,10 +2030,16 @@ async fn calendar_mutation_response(
             today,
             has_contacts,
             &ics_subscription_ids(state, session),
+            state.holidays_region.is_some(),
         );
         let fragment = render_fragment(session, state, &calendars, &params, today).await?;
         let list_tpl = CalendarListTemplate {
-            calendars: sidebar_calendars(&calendars, &params, has_contacts),
+            calendars: sidebar_calendars(
+                &calendars,
+                &params,
+                has_contacts,
+                state.holidays_region.is_some(),
+            ),
         };
         let list_html = list_tpl
             .render()
@@ -2179,6 +2241,7 @@ pub async fn ics_new_form(
         today,
         session.contacts_account_id.is_some(),
         &ics_subscription_ids(&state, &session),
+        state.holidays_region.is_some(),
     );
     let form = blank_ics_form(&params, None);
     let modal_html = form
@@ -2209,6 +2272,7 @@ pub async fn ics_edit_form(
         today,
         session.contacts_account_id.is_some(),
         &ics_subscription_ids(&state, &session),
+        state.holidays_region.is_some(),
     );
     let sub = ics_subscriptions_for(&state, &session)
         .into_iter()
@@ -2283,6 +2347,7 @@ async fn render_ics_form_error(
         today,
         session.contacts_account_id.is_some(),
         &ics_subscription_ids(state, session),
+        state.holidays_region.is_some(),
     );
     let mut tpl = blank_ics_form(&params, Some(message));
     tpl.is_edit = is_edit;
@@ -2319,7 +2384,14 @@ async fn ics_mutation_response(
         };
         let has_contacts = session.contacts_account_id.is_some();
         let ics_ids = ics_subscription_ids(state, session);
-        let params = resolve_view_params(&raw, &calendars, today, has_contacts, &ics_ids);
+        let params = resolve_view_params(
+            &raw,
+            &calendars,
+            today,
+            has_contacts,
+            &ics_ids,
+            state.holidays_region.is_some(),
+        );
         let fragment = render_fragment(session, state, &calendars, &params, today).await?;
         let list_tpl = IcsListTemplate {
             calendars: sidebar_ics_subscriptions(

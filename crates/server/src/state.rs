@@ -58,6 +58,34 @@ pub struct CachedIcsEvents {
     pub error: Option<String>,
 }
 
+/// Parses `JSCAL_HOLIDAYS_REGION`'s value into a `holiday_de::GermanRegion`
+/// variant name (e.g. `BadenWuerttemberg`, `Bayern`, `NordrheinWestfalen`).
+/// Unset or unrecognized means no holidays pseudo-calendar at all — this is
+/// opt-in per deployment, not a default, since public holidays are specific
+/// to wherever the server operator actually is.
+fn parse_german_region(s: &str) -> Option<holiday_de::GermanRegion> {
+    use holiday_de::GermanRegion::*;
+    Some(match s {
+        "BadenWuerttemberg" => BadenWuerttemberg,
+        "Bayern" => Bayern,
+        "Berlin" => Berlin,
+        "Brandenburg" => Brandenburg,
+        "Bremen" => Bremen,
+        "Hamburg" => Hamburg,
+        "Hessen" => Hessen,
+        "MechlenburgVorpommern" => MechlenburgVorpommern,
+        "Niedersachsen" => Niedersachsen,
+        "NordrheinWestfalen" => NordrheinWestfalen,
+        "RheinlandPfalz" => RheinlandPfalz,
+        "Saarland" => Saarland,
+        "Sachsen" => Sachsen,
+        "SachsenAnhalt" => SachsenAnhalt,
+        "SchleswigHolstein" => SchleswigHolstein,
+        "Thueringen" => Thueringen,
+        _ => return None,
+    })
+}
+
 /// Pre-fills the login form so a demo/test instance (e.g. wired up to
 /// `mock-jmap-server`) needs zero typing to sign in. Only set via
 /// `JSCAL_DEMO_SERVER_URL` — there's no default, so a normal deployment's
@@ -91,6 +119,9 @@ pub struct AppState {
     /// by subscription id (globally unique, no account-key prefix needed).
     pub ics_cache: Arc<DashMap<String, CachedIcsEvents>>,
     pub http_client: reqwest::Client,
+    /// The German federal state to show public holidays for (`JSCAL_HOLIDAYS_REGION`
+    /// env var), or `None` to not offer a holidays pseudo-calendar at all.
+    pub holidays_region: Option<holiday_de::GermanRegion>,
 }
 
 impl AppState {
@@ -108,6 +139,9 @@ impl AppState {
                 password: std::env::var("JSCAL_DEMO_PASSWORD")
                     .unwrap_or_else(|_| "demo".to_string()),
             });
+        let holidays_region = std::env::var("JSCAL_HOLIDAYS_REGION")
+            .ok()
+            .and_then(|s| parse_german_region(&s));
         Self {
             sessions: Arc::new(DashMap::new()),
             viewer_tz,
@@ -120,6 +154,7 @@ impl AppState {
                 .timeout(std::time::Duration::from_secs(15))
                 .build()
                 .unwrap_or_default(),
+            holidays_region,
         }
     }
 }

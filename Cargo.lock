@@ -299,6 +299,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cc14f565cf027a105f7a44ccf9e5b424348421a1d8952a8fc9d499d313107789"
 
 [[package]]
+name = "computus"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3031543635f9370bbf041833cc5dbb5d1b79b14487113f0b50ab3f3a535e804d"
+
+[[package]]
 name = "cookie"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -586,6 +592,16 @@ name = "hermit-abi"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc0fef456e4baa96da950455cd02c081ca953b141298e41db3fc7e36b1da849c"
+
+[[package]]
+name = "holiday_de"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc9f821cd8baad7f8b71f378e0d1061c961c62ccf4d7b41117ce4a8c6cc42307"
+dependencies = [
+ "chrono",
+ "computus",
+]
 
 [[package]]
 name = "http"
@@ -894,6 +910,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "dashmap",
+ "holiday_de",
  "jmap-client",
  "reqwest",
  "serde",
