@@ -8,6 +8,7 @@ WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY crates/jmap-client crates/jmap-client
 COPY crates/server crates/server
+COPY crates/mock-jmap-server crates/mock-jmap-server
 RUN cargo build --release --locked -p jscalendar-server
 
 FROM debian:bookworm-slim AS runtime
