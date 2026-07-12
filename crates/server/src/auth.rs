@@ -149,6 +149,35 @@ fn normalize_session_url(input: &str) -> Result<url::Url, String> {
     Ok(url)
 }
 
+/// Turns a low-level `jmap_client::Error` into a message that names the
+/// actual failure (bad credentials vs. unreachable host vs. an unexpected
+/// server response) instead of a generic "could not connect" — shown both
+/// when an established session unexpectedly fails and by the Settings
+/// page's "Test connection" button.
+fn describe_jmap_error(e: &jmap_client::Error) -> String {
+    use jmap_client::Error;
+    match e {
+        Error::Unauthorized => {
+            "authentication failed — check the username/password or token".to_string()
+        }
+        Error::Http(http_err) => {
+            if http_err.is_timeout() {
+                "connection timed out".to_string()
+            } else if http_err.is_connect() {
+                "could not reach the server — check the address and that it's reachable".to_string()
+            } else if let Some(status) = http_err.status() {
+                format!("server responded with HTTP {status}")
+            } else {
+                format!("network error: {http_err}")
+            }
+        }
+        Error::Json(json_err) => format!("the server's response wasn't valid JSON: {json_err}"),
+        Error::Protocol(msg) => msg.clone(),
+        Error::UnsupportedAccount(what) => format!("this account doesn't support {what}"),
+        Error::NotFound => "not found".to_string(),
+    }
+}
+
 /// Connects to a user's configured JMAP server and builds a `UserSession`
 /// from the resulting session discovery.
 async fn connect_jmap(user: &User) -> Result<UserSession, String> {
@@ -161,7 +190,7 @@ async fn connect_jmap(user: &User) -> Result<UserSession, String> {
     client
         .connect()
         .await
-        .map_err(|e| format!("could not connect: {e}"))?;
+        .map_err(|e| describe_jmap_error(&e))?;
     let session = client.session().expect("connect populates session");
     let account_id = session
         .calendars_account_id()
@@ -173,6 +202,58 @@ async fn connect_jmap(user: &User) -> Result<UserSession, String> {
         account_id,
         contacts_account_id,
     })
+}
+
+/// Result of a one-off "Test connection" attempt: never persisted, never
+/// cached — just a probe using whatever's currently in the settings form
+/// (which may not be saved yet).
+pub struct ConnectionTestOutcome {
+    pub ok: bool,
+    pub message: String,
+}
+
+pub async fn test_jmap_connection(jmap: &crate::users::JmapSettings) -> ConnectionTestOutcome {
+    if jmap.server_url.trim().is_empty() {
+        return ConnectionTestOutcome {
+            ok: false,
+            message: "Enter a server address first.".to_string(),
+        };
+    }
+    let Some(creds) = jmap.credentials() else {
+        return ConnectionTestOutcome {
+            ok: false,
+            message: "Enter a username and password, or a bearer token.".to_string(),
+        };
+    };
+    let session_url = match normalize_session_url(&jmap.server_url) {
+        Ok(u) => u,
+        Err(e) => {
+            return ConnectionTestOutcome {
+                ok: false,
+                message: e,
+            }
+        }
+    };
+    let mut client = Client::new(session_url, creds);
+    if let Err(e) = client.connect().await {
+        return ConnectionTestOutcome {
+            ok: false,
+            message: describe_jmap_error(&e),
+        };
+    }
+    let session = client.session().expect("connect populates session");
+    if session.calendars_account_id().is_none() {
+        return ConnectionTestOutcome {
+            ok: false,
+            message: "Connected, but this account doesn't support JMAP Calendars.".to_string(),
+        };
+    }
+    let message = if session.contacts_account_id().is_some() {
+        "Connected — calendars and contacts are both available.".to_string()
+    } else {
+        "Connected — calendars are available (no contacts support detected).".to_string()
+    };
+    ConnectionTestOutcome { ok: true, message }
 }
 
 /// Resolves the cached JMAP client for `user`, connecting (and caching the
@@ -280,7 +361,8 @@ where
                     "could not establish JMAP session for {}: {e}",
                     user.username
                 );
-                Err(crate::webutil::redirect("/app/settings", &parts.headers))
+                let target = format!("/app/settings/connection?error={}", urlencode(&e));
+                Err(crate::webutil::redirect(&target, &parts.headers))
             }
         }
     }

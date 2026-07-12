@@ -104,6 +104,10 @@ async fn main() {
             get(routes::settings_connection_form).post(routes::settings_connection_save),
         )
         .route(
+            "/app/settings/connection/test",
+            post(routes::settings_connection_test),
+        )
+        .route(
             "/app/settings/password",
             get(routes::settings_password_form).post(routes::settings_password_save),
         )

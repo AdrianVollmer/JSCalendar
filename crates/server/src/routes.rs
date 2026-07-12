@@ -3092,10 +3092,18 @@ struct SettingsPreferencesTemplate {
 #[template(path = "settings_connection.html")]
 struct SettingsConnectionTemplate {
     saved: bool,
+    error: Option<String>,
     jmap_server_url: String,
     jmap_username: String,
     jmap_password: String,
     jmap_token: String,
+}
+
+#[derive(Template)]
+#[template(path = "connection_test_result.html")]
+struct ConnectionTestResultTemplate {
+    ok: bool,
+    message: String,
 }
 
 #[derive(Template)]
@@ -3109,6 +3117,8 @@ struct SettingsPasswordTemplate {
 pub struct SettingsQuery {
     #[serde(default)]
     saved: bool,
+    #[serde(default)]
+    error: Option<String>,
 }
 
 fn server_default_labels(state: &AppState) -> (String, String, String) {
@@ -3186,6 +3196,7 @@ pub async fn settings_connection_form(
         .unwrap_or_default();
     let body = render_section(&SettingsConnectionTemplate {
         saved: q.saved,
+        error: q.error,
         jmap_server_url: jmap.server_url,
         jmap_username: jmap.username,
         jmap_password: jmap.password,
@@ -3206,21 +3217,42 @@ pub struct ConnectionFormBody {
     pub jmap_token: String,
 }
 
+impl ConnectionFormBody {
+    fn into_jmap_settings(self) -> crate::users::JmapSettings {
+        crate::users::JmapSettings {
+            server_url: self.jmap_server_url.trim().to_string(),
+            username: self.jmap_username.trim().to_string(),
+            password: self.jmap_password,
+            token: self.jmap_token.trim().to_string(),
+        }
+    }
+}
+
 pub async fn settings_connection_save(
     State(state): State<AppState>,
     user: AppUser,
     headers: HeaderMap,
     Form(form): Form<ConnectionFormBody>,
 ) -> Response {
-    let jmap = crate::users::JmapSettings {
-        server_url: form.jmap_server_url.trim().to_string(),
-        username: form.jmap_username.trim().to_string(),
-        password: form.jmap_password,
-        token: form.jmap_token.trim().to_string(),
-    };
+    let jmap = form.into_jmap_settings();
     state.users.update_user(&user.user_id, |u| u.jmap = jmap);
     state.jmap_clients.remove(&user.user_id);
     crate::webutil::redirect("/app/settings/connection?saved=true", &headers)
+}
+
+/// Tests whatever connection details are currently in the form — which may
+/// not be saved yet — without touching stored settings or the cached JMAP
+/// client, so a user can verify credentials before committing to them.
+pub async fn settings_connection_test(
+    _user: AppUser,
+    Form(form): Form<ConnectionFormBody>,
+) -> Response {
+    let jmap = form.into_jmap_settings();
+    let outcome = crate::auth::test_jmap_connection(&jmap).await;
+    render(&ConnectionTestResultTemplate {
+        ok: outcome.ok,
+        message: outcome.message,
+    })
 }
 
 pub async fn settings_password_form(

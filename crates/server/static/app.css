@@ -121,6 +121,20 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .settings-actions { display: flex; align-items: center; justify-content: flex-end; gap: 0.6rem; margin-top: 0.4rem; }
 .settings-saved { color: var(--accent); font-size: 0.88em; margin: 0; background: color-mix(in srgb, var(--accent) 12%, transparent); padding: 0.5em 0.7em; border-radius: var(--radius-sm); }
 
+/* ---- connection test button + result ---- */
+.conn-test-btn { position: relative; }
+.conn-test-btn .btn-spinner { display: none; }
+.conn-test-btn.htmx-request .btn-label { visibility: hidden; }
+.conn-test-btn.htmx-request .btn-spinner {
+  display: block; position: absolute; inset: 0; margin: auto; width: 1em; height: 1em;
+  border-radius: 50%; border: 2px solid currentColor; border-top-color: transparent;
+  animation: conn-test-spin 0.6s linear infinite;
+}
+@keyframes conn-test-spin { to { transform: rotate(360deg); } }
+.conn-test-result { font-size: 0.88em; margin: 0.6rem 0 0; padding: 0.5em 0.7em; border-radius: var(--radius-sm); }
+.conn-test-ok { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.conn-test-error { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+
 /* ---- admin: user list ---- */
 .admin-user-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.4rem; }
 .admin-user-row {
@@ -212,6 +226,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .settings-main { flex: 1; min-width: 0; padding: 1.8rem 2rem; max-width: 620px; }
 .settings-main h1 { font-size: 1.25rem; margin: 0 0 1.3rem; }
 .settings-main form { display: flex; flex-direction: column; gap: 0.9rem; }
+.settings-main .login-error, .settings-main .settings-saved { margin-bottom: 0.8rem; }
 
 /* ---- month view ---- */
 .month-view { display: flex; flex-direction: column; height: 100%; }

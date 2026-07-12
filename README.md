@@ -222,12 +222,21 @@ it manually instead.
   page/form instead of one long scroll: **Preferences** (override the
   server's `JSCAL_TIMEZONE`, `JSCAL_HOLIDAYS_REGION`, and
   `JSCAL_TIME_FORMAT` for just this account), **Calendar connection** (the
-  JMAP server/credentials), and **Password**. Saved to the database (not a
-  browser cookie or `localStorage`), so preferences follow the account to
-  any browser or device it signs into, and the server reads them on every
-  render — no JavaScript required for the override to apply. A brand-new
-  account with no calendar server configured yet can still reach every
-  section (the sidebar's calendar list just stays empty until one is set).
+  JMAP server/credentials, with a "Test connection" button that probes
+  whatever's currently in the form — saved or not — and reports success or
+  the specific failure: bad credentials, an unreachable host, an
+  unexpected server response, or an account that doesn't support JMAP
+  Calendars), and **Password**. Saved to the database (not a browser
+  cookie or `localStorage`), so preferences follow the account to any
+  browser or device it signs into, and the server reads them on every
+  render — no JavaScript required for the override to apply (the
+  connection-test button is the one exception: it's a progressive
+  enhancement with no non-JS fallback). A brand-new account with no
+  calendar server configured yet can still reach every section (the
+  sidebar's calendar list just stays empty until one is set). If a
+  previously working connection starts failing (bad password rotation,
+  server outage), the next page load redirects here with the concrete
+  reason shown instead of failing silently.
 - User management (see "User management" above): `admin`/`user` roles, and
   an admin UI (`/admin/users`, added as a "Users" section alongside
   Settings for admins) to create/edit/delete accounts, a built-in bootstrap

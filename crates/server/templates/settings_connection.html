@@ -2,6 +2,9 @@
 {% if saved %}
 <p class="settings-saved" role="status">Saved.</p>
 {% endif %}
+{% if let Some(err) = error %}
+<p class="login-error" role="alert">Couldn't connect using the saved settings: {{ err }}</p>
+{% endif %}
 <p class="login-sub">The JMAP server this account's calendars, events, and contacts are stored on.</p>
 <form method="post" action="/app/settings/connection">
   <label class="field">
@@ -25,6 +28,11 @@
   </details>
 
   <div class="settings-actions">
+    <button type="button" class="btn btn-ghost conn-test-btn" hx-post="/app/settings/connection/test" hx-include="closest form" hx-target="#conn-test-result" hx-swap="innerHTML">
+      <span class="btn-label">Test connection</span>
+      <span class="btn-spinner" aria-hidden="true"></span>
+    </button>
     <button type="submit" class="btn btn-primary">Save</button>
   </div>
+  <div id="conn-test-result" aria-live="polite"></div>
 </form>
