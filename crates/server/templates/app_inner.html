@@ -54,9 +54,6 @@
     <div class="sidebar-footer">
       <span class="sidebar-user">{{ username }}</span>
       <span class="sidebar-footer-links">
-        {% if is_admin %}
-        <a class="btn-link" href="/admin/users">Admin</a>
-        {% endif %}
         <a class="btn-link" href="/app/settings">Settings</a>
         <form method="post" action="/logout"><button type="submit" class="btn-link">Sign out</button></form>
       </span>

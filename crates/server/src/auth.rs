@@ -247,7 +247,6 @@ pub struct AuthedSession {
     pub contacts_account_id: Option<String>,
     pub user_id: String,
     pub app_username: String,
-    pub role: Role,
     pub prefs: crate::users::DisplayPrefs,
 }
 
@@ -274,7 +273,6 @@ where
                 contacts_account_id: session.contacts_account_id,
                 user_id: app_user.user_id,
                 app_username: app_user.username,
-                role: app_user.role,
                 prefs,
             }),
             Err(e) => {
@@ -301,7 +299,6 @@ pub async fn try_full_session(app_state: &AppState, app_user: &AppUser) -> Optio
         contacts_account_id: session.contacts_account_id,
         user_id: app_user.user_id.clone(),
         app_username: app_user.username.clone(),
-        role: app_user.role,
         prefs: user.prefs,
     })
 }

@@ -634,7 +634,6 @@ fn view_links(params: &ViewParams, has_contacts: bool) -> Vec<ViewLink> {
 struct ShellParts {
     title: String,
     username: String,
-    is_admin: bool,
     is_dated_view: bool,
     calendars: Vec<SidebarCalendarVM>,
     ics_subscriptions: Vec<SidebarCalendarVM>,
@@ -651,7 +650,6 @@ struct ShellParts {
 struct AppShellTemplate {
     title: String,
     username: String,
-    is_admin: bool,
     is_dated_view: bool,
     calendars: Vec<SidebarCalendarVM>,
     ics_subscriptions: Vec<SidebarCalendarVM>,
@@ -669,7 +667,6 @@ struct AppShellTemplate {
 struct AppInnerTemplate {
     title: String,
     username: String,
-    is_admin: bool,
     is_dated_view: bool,
     calendars: Vec<SidebarCalendarVM>,
     ics_subscriptions: Vec<SidebarCalendarVM>,
@@ -686,7 +683,6 @@ impl ShellParts {
         AppShellTemplate {
             title: self.title,
             username: self.username,
-            is_admin: self.is_admin,
             is_dated_view: self.is_dated_view,
             calendars: self.calendars,
             ics_subscriptions: self.ics_subscriptions,
@@ -704,7 +700,6 @@ impl ShellParts {
         AppInnerTemplate {
             title: self.title,
             username: self.username,
-            is_admin: self.is_admin,
             is_dated_view: self.is_dated_view,
             calendars: self.calendars,
             ics_subscriptions: self.ics_subscriptions,
@@ -730,7 +725,6 @@ async fn build_shell_parts(
     Ok(ShellParts {
         title: params.title(today),
         username: session.app_username.clone(),
-        is_admin: session.role == crate::users::Role::Admin,
         is_dated_view: params.view.is_dated(),
         calendars: sidebar_calendars(
             calendars,
@@ -3229,9 +3223,13 @@ pub async fn settings_connection_save(
     crate::webutil::redirect("/app/settings/connection?saved=true", &headers)
 }
 
-pub async fn settings_password_form(State(state): State<AppState>, user: AppUser) -> Response {
+pub async fn settings_password_form(
+    State(state): State<AppState>,
+    user: AppUser,
+    Query(q): Query<SettingsQuery>,
+) -> Response {
     let body = render_section(&SettingsPasswordTemplate {
-        saved: false,
+        saved: q.saved,
         password_error: None,
     });
     account_page(&state, &user, "password", "Password", body).await
@@ -3239,6 +3237,8 @@ pub async fn settings_password_form(State(state): State<AppState>, user: AppUser
 
 #[derive(Debug, Deserialize, Default)]
 pub struct PasswordFormBody {
+    #[serde(default)]
+    pub current_password: String,
     #[serde(default)]
     pub new_password: String,
     #[serde(default)]
@@ -3251,6 +3251,12 @@ pub async fn settings_password_save(
     headers: HeaderMap,
     Form(form): Form<PasswordFormBody>,
 ) -> Response {
+    let Some(stored) = state.users.get_user(&user.user_id) else {
+        return password_change_error(&state, &user, "Account not found.").await;
+    };
+    if !crate::users::verify_password(&form.current_password, &stored.password_hash) {
+        return password_change_error(&state, &user, "Current password is incorrect.").await;
+    }
     if form.new_password != form.new_password_confirm {
         return password_change_error(&state, &user, "Passwords do not match.").await;
     }
