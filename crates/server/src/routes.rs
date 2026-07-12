@@ -8,7 +8,9 @@ use axum::Form;
 use chrono::{Datelike, NaiveDate, NaiveDateTime};
 use futures_util::StreamExt;
 use jmap_client::duration::{format_duration, parse_duration};
-use jmap_client::jscalendar::{Calendar, CalendarEvent, Frequency, LocalDateTime, RecurrenceRule};
+use jmap_client::jscalendar::{
+    Alert, Calendar, CalendarEvent, Frequency, LocalDateTime, Participant, RecurrenceRule, Trigger,
+};
 use jmap_client::jscontact::{
     AddressBook, Anniversary, AnniversaryDate, Card, EmailAddress, NameProperty,
 };
@@ -1004,6 +1006,8 @@ struct EventFormTemplate {
     repeat_end_mode: String,
     repeat_until: String,
     repeat_count: u32,
+    guests: String,
+    alert_options: Vec<SelectOption>,
     error: Option<String>,
 }
 
@@ -1021,6 +1025,166 @@ fn calendar_options(calendars: &[Calendar], selected: Option<&str>) -> Vec<Calen
             })
         })
         .collect()
+}
+
+/// A preset list of common reminder offsets: `(value, label)`, where
+/// `value` is the exact `Trigger::Offset` string that gets stored. Kept to
+/// one alert (like recurrence, this editor manages a single simple rule,
+/// not an arbitrary set) — see `alert_options`/`build_event_from_form`.
+const ALERT_PRESETS: &[(&str, &str)] = &[
+    ("PT0S", "At time of event"),
+    ("-PT5M", "5 minutes before"),
+    ("-PT15M", "15 minutes before"),
+    ("-PT30M", "30 minutes before"),
+    ("-PT1H", "1 hour before"),
+    ("-P1D", "1 day before"),
+];
+
+/// Builds the reminder `<select>` options, synthesizing an extra entry for
+/// `selected` when it doesn't match a preset (same pattern as
+/// `tz_options`/`display_tz_options`) so an alert set by another client
+/// with an unusual offset still round-trips if the user leaves it alone.
+fn alert_options(selected: &str) -> Vec<SelectOption> {
+    let mut opts = vec![SelectOption {
+        value: String::new(),
+        label: "No reminder".to_string(),
+        selected: selected.is_empty(),
+    }];
+    let mut seen_selected = selected.is_empty();
+    for &(value, label) in ALERT_PRESETS {
+        if value == selected {
+            seen_selected = true;
+        }
+        opts.push(SelectOption {
+            value: value.to_string(),
+            label: label.to_string(),
+            selected: value == selected,
+        });
+    }
+    if !seen_selected && !selected.is_empty() {
+        opts.push(SelectOption {
+            value: selected.to_string(),
+            label: format!("Custom ({selected})"),
+            selected: true,
+        });
+    }
+    opts
+}
+
+/// The single alert's offset (e.g. `"-PT15M"`), if the event has exactly
+/// the kind of alert this editor can represent — an `OffsetTrigger`
+/// relative to the start. Anything else (an `AbsoluteTrigger`, multiple
+/// alerts) is treated as "no reminder shown", matching the recurrence
+/// editor's precedent of only round-tripping shapes it itself can produce.
+fn first_alert_offset(event: &CalendarEvent) -> String {
+    event
+        .alerts
+        .as_ref()
+        .and_then(|alerts| alerts.values().next())
+        .and_then(|alert| match &alert.trigger {
+            Trigger::Offset { offset, .. } => Some(offset.clone()),
+            Trigger::Absolute { .. } => None,
+        })
+        .unwrap_or_default()
+}
+
+/// Recognized `(status)` suffixes a guest line can carry — anything else
+/// found in trailing parentheses is left alone (most likely just part of
+/// the name/email, not a status marker).
+const PARTICIPANT_STATUSES: &[&str] = &[
+    "needs-action",
+    "accepted",
+    "declined",
+    "tentative",
+    "delegated",
+];
+
+/// Renders one attendee as a single guest-list line: `Name <email>`, or
+/// just the email if there's no name, with a trailing `(status)` only when
+/// it's not the default "needs-action" — keeping the common case (invited,
+/// no response yet) visually clean.
+fn format_guest_line(p: &Participant) -> String {
+    let contact = match (p.name.as_deref(), p.email.as_deref()) {
+        (Some(name), Some(email)) if !name.is_empty() => format!("{name} <{email}>"),
+        (_, Some(email)) => email.to_string(),
+        (Some(name), None) => name.to_string(),
+        (None, None) => return String::new(),
+    };
+    match p.participation_status.as_deref() {
+        Some(status) if status != "needs-action" && PARTICIPANT_STATUSES.contains(&status) => {
+            format!("{contact} ({status})")
+        }
+        _ => contact,
+    }
+}
+
+/// The event's attendee-role guests as guest-list text, one per line — see
+/// `format_guest_line`. Participants with other roles (an organizer/owner
+/// entry from another client, say) aren't shown here and aren't touched by
+/// saving this form; see `build_event_from_form`.
+fn guests_text(event: &CalendarEvent) -> String {
+    let Some(participants) = &event.participants else {
+        return String::new();
+    };
+    participants
+        .values()
+        .filter(|p| p.roles.iter().any(|r| r == "attendee"))
+        .map(format_guest_line)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Parses one guest-list line back into an attendee `Participant` — the
+/// inverse of `format_guest_line`. Returns `None` for a blank line or one
+/// with no usable email address.
+fn parse_guest_line(line: &str) -> Option<Participant> {
+    let line = line.trim();
+    if line.is_empty() {
+        return None;
+    }
+    let (contact_part, status) = match (line.rfind('('), line.ends_with(')')) {
+        (Some(open), true) if open + 1 < line.len() - 1 => {
+            let candidate = line[open + 1..line.len() - 1].trim().to_lowercase();
+            if PARTICIPANT_STATUSES.contains(&candidate.as_str()) {
+                (line[..open].trim(), Some(candidate))
+            } else {
+                (line, None)
+            }
+        }
+        _ => (line, None),
+    };
+    let (name, email) = match (contact_part.find('<'), contact_part.find('>')) {
+        (Some(lt), Some(gt)) if gt > lt => {
+            let name = contact_part[..lt].trim();
+            let email = contact_part[lt + 1..gt].trim();
+            (
+                (!name.is_empty()).then(|| name.to_string()),
+                (!email.is_empty()).then(|| email.to_string()),
+            )
+        }
+        _ => (None, Some(contact_part.to_string())),
+    };
+    let email = email.filter(|e| !e.is_empty())?;
+    Some(Participant {
+        name,
+        email: Some(email),
+        roles: vec!["attendee".to_string()],
+        participation_status: Some(status.unwrap_or_else(|| "needs-action".to_string())),
+        ..Default::default()
+    })
+}
+
+/// Parses the guest-list textarea into an attendee participants map, or
+/// `None` if it's empty — see `parse_guest_line`.
+fn parse_guests(text: &str) -> Option<std::collections::BTreeMap<String, Participant>> {
+    let mut map = std::collections::BTreeMap::new();
+    for (i, line) in text.lines().enumerate() {
+        if let Some(p) = parse_guest_line(line) {
+            map.insert(format!("guest{i}"), p);
+        }
+    }
+    (!map.is_empty()).then_some(map)
 }
 
 fn blank_form(
@@ -1050,6 +1214,8 @@ fn blank_form(
         repeat_end_mode: "never".to_string(),
         repeat_until: params.date.format("%Y-%m-%d").to_string(),
         repeat_count: 5,
+        guests: String::new(),
+        alert_options: alert_options(""),
         error,
     }
 }
@@ -1135,6 +1301,8 @@ fn event_to_form(
         repeat_end_mode,
         repeat_until,
         repeat_count,
+        guests: guests_text(event),
+        alert_options: alert_options(&first_alert_offset(event)),
         error,
     }
 }
@@ -1268,6 +1436,10 @@ pub struct EventFormBody {
     pub repeat_count: u32,
     #[serde(default)]
     pub repeat_until: String,
+    #[serde(default)]
+    pub guests: String,
+    #[serde(default)]
+    pub alert: String,
 }
 
 fn one() -> u32 {
@@ -1352,6 +1524,25 @@ fn build_event_from_form(form: &EventFormBody, uid: String) -> Result<CalendarEv
             _ => {}
         }
         event.recurrence_rules = Some(vec![rule]);
+    }
+
+    event.participants = parse_guests(&form.guests);
+
+    if !form.alert.is_empty() {
+        let mut alerts = std::collections::BTreeMap::new();
+        alerts.insert(
+            "alert1".to_string(),
+            Alert {
+                type_: "Alert".to_string(),
+                trigger: Trigger::Offset {
+                    offset: form.alert.clone(),
+                    relative_to: Some("start".to_string()),
+                },
+                action: Some("display".to_string()),
+                extra: std::collections::BTreeMap::new(),
+            },
+        );
+        event.alerts = Some(alerts);
     }
 
     Ok(event)
@@ -1444,6 +1635,22 @@ pub async fn event_update(
     if let Some(obj) = patch.as_object_mut() {
         obj.remove("id");
         obj.remove("uid");
+        // A field the form left at `None` (description cleared, no
+        // recurrence, no guests, no reminder, …) is omitted from the
+        // serialized patch entirely (`skip_serializing_if`), so the
+        // server would just leave whatever was there before — an explicit
+        // `null` is what actually clears a previously-set value.
+        for (key, is_none) in [
+            ("description", event.description.is_none()),
+            ("locations", event.locations.is_none()),
+            ("recurrenceRules", event.recurrence_rules.is_none()),
+            ("participants", event.participants.is_none()),
+            ("alerts", event.alerts.is_none()),
+        ] {
+            if is_none {
+                obj.insert(key.to_string(), serde_json::Value::Null);
+            }
+        }
     }
     session
         .client
@@ -1503,6 +1710,8 @@ async fn render_form_error(
     tpl.repeat_end_mode = form.repeat_end_mode.clone();
     tpl.repeat_until = form.repeat_until.clone();
     tpl.repeat_count = form.repeat_count;
+    tpl.guests = form.guests.clone();
+    tpl.alert_options = alert_options(&form.alert);
     let body = tpl
         .render()
         .map_err(|e| AppError::bad_request(e.to_string()))?;
@@ -2270,7 +2479,61 @@ struct CalendarFormTemplate {
     name: String,
     color: String,
     description: String,
+    share_with: String,
     error: Option<String>,
+}
+
+/// Renders `shareWith` as one `<account-id>: view|edit` line per grant —
+/// see `parse_share_with` for the inverse.
+fn share_with_text(calendar: &Calendar) -> String {
+    let Some(share_with) = &calendar.share_with else {
+        return String::new();
+    };
+    share_with
+        .iter()
+        .map(|(id, rights)| {
+            let level = if rights.may_add_items || rights.may_update_all || rights.may_remove_all {
+                "edit"
+            } else {
+                "view"
+            };
+            format!("{id}: {level}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Parses the "Shared with" textarea into a `shareWith` map — the inverse
+/// of `share_with_text`. Only two rights tiers are offered (see
+/// `CalendarRights::view_only`/`can_edit`); admin/delete rights are never
+/// granted through this simple editor.
+fn parse_share_with(
+    text: &str,
+) -> Result<
+    Option<std::collections::BTreeMap<String, jmap_client::jscalendar::CalendarRights>>,
+    String,
+> {
+    let mut map = std::collections::BTreeMap::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let (id, level) = line
+            .split_once(':')
+            .ok_or_else(|| format!("\"{line}\" is missing a \": view\" or \": edit\" suffix"))?;
+        let id = id.trim();
+        if id.is_empty() {
+            return Err(format!("\"{line}\" is missing an account id"));
+        }
+        let rights = match level.trim().to_lowercase().as_str() {
+            "view" => jmap_client::jscalendar::CalendarRights::view_only(),
+            "edit" => jmap_client::jscalendar::CalendarRights::can_edit(),
+            other => return Err(format!("\"{other}\" must be either \"view\" or \"edit\"")),
+        };
+        map.insert(id.to_string(), rights);
+    }
+    Ok((!map.is_empty()).then_some(map))
 }
 
 fn blank_calendar_form(params: &ViewParams, error: Option<String>) -> CalendarFormTemplate {
@@ -2284,6 +2547,7 @@ fn blank_calendar_form(params: &ViewParams, error: Option<String>) -> CalendarFo
         name: String::new(),
         color: DEFAULT_CALENDAR_COLOR.to_string(),
         description: String::new(),
+        share_with: String::new(),
         error,
     }
 }
@@ -2306,6 +2570,7 @@ fn calendar_to_form(
             .clone()
             .unwrap_or_else(|| DEFAULT_CALENDAR_COLOR.to_string()),
         description: calendar.description.clone().unwrap_or_default(),
+        share_with: share_with_text(calendar),
         error,
     }
 }
@@ -2391,6 +2656,8 @@ pub struct CalendarFormBody {
     pub color: String,
     #[serde(default)]
     pub description: String,
+    #[serde(default)]
+    pub share_with: String,
 }
 
 fn build_calendar_from_form(form: &CalendarFormBody) -> Result<Calendar, String> {
@@ -2405,6 +2672,7 @@ fn build_calendar_from_form(form: &CalendarFormBody) -> Result<Calendar, String>
     if !form.description.is_empty() {
         calendar.description = Some(form.description.clone());
     }
+    calendar.share_with = parse_share_with(&form.share_with)?;
     Ok(calendar)
 }
 
@@ -2438,6 +2706,7 @@ async fn render_calendar_form_error(
     tpl.name = form.name.clone();
     tpl.color = form.color.clone();
     tpl.description = form.description.clone();
+    tpl.share_with = form.share_with.clone();
     let body = tpl
         .render()
         .map_err(|e| AppError::bad_request(e.to_string()))?;
@@ -2552,6 +2821,16 @@ pub async fn calendar_update(
         serde_json::to_value(&calendar).map_err(|e| AppError::bad_request(e.to_string()))?;
     if let Some(obj) = patch.as_object_mut() {
         obj.remove("id");
+        // `share_with: None` is omitted from the serialized calendar
+        // (`skip_serializing_if`) so a genuinely unchanged sharing list
+        // doesn't get re-sent on every save of an unrelated field — but
+        // that means "no shares" and "don't touch shares" would otherwise
+        // look identical. Clearing every share by emptying the textarea
+        // needs an explicit `null`, which JMAP treats as "unset this
+        // property", to actually take effect server-side.
+        if calendar.share_with.is_none() {
+            obj.insert("shareWith".to_string(), serde_json::Value::Null);
+        }
     }
     session
         .client

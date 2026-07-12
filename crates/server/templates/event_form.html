@@ -79,6 +79,20 @@
       <textarea name="description" rows="3" placeholder="Optional">{{ description }}</textarea>
     </label>
 
+    <label class="field">
+      <span>Reminder</span>
+      <select name="alert">
+        {% for opt in alert_options %}
+        <option value="{{ opt.value }}" {% if opt.selected %}selected{% endif %}>{{ opt.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label class="field">
+      <span>Guests <small>(one per line: <code>email</code> or <code>Name &lt;email&gt;</code>)</small></span>
+      <textarea name="guests" rows="3" placeholder="Optional, e.g. jane@example.com">{{ guests }}</textarea>
+    </label>
+
     <fieldset class="recurrence-fieldset">
       <legend>Repeat</legend>
       <div class="field-row">

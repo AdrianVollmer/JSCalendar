@@ -157,6 +157,24 @@ it manually instead.
 
 ## What's implemented
 
+- Guests, a reminder, and calendar sharing, each as a deliberately simple
+  plain-text editor (see "Known limitations" for exactly how narrow):
+  - **Guests**: a textarea on the event form, one attendee per line as
+    `email` or `Name <email>`, with an optional trailing `(status)` (e.g.
+    `(accepted)`) so RSVP status set by another client round-trips as long
+    as you don't touch that guest's line. Written as JSCalendar
+    `participants` with role `attendee`.
+  - **Reminder**: a single-alert dropdown on the event form (at time of
+    event, 5/15/30 minutes, 1 hour, or 1 day before), written as one
+    `OffsetTrigger` alert. This only writes the alert data — actually
+    *delivering* a notification when it fires is a separate, unbuilt
+    feature (see the PWA/notifications discussion for why).
+  - **Calendar sharing**: a textarea on the calendar form, one grant per
+    line as `<jmap-account-id>: view` or `<jmap-account-id>: edit` —
+    written as `Calendar/set` `shareWith`. The id is the other account's
+    raw JMAP account id (this app has no directory/principal lookup by
+    email), and the two tiers map to a fixed, safe subset of
+    `CalendarRights` (never admin/delete rights).
 - Share an event (the "Share" button on an existing event's edit form)
   hands it to the OS-level share sheet via the Web Share API
   (`navigator.share`) as a real `.ics` file when the browser supports
@@ -274,12 +292,18 @@ it manually instead.
   `JSCAL_HOLIDAYS_REGION`) and can be overridden per-browser from the
   Settings page, but there's no automatic detection of the browser's own
   time zone; you still have to pick it yourself once.
-- Participants/attendees, alerts, and calendar-to-calendar sharing
-  (`Calendar/set` `shareWith`, i.e. granting another JMAP account access to
-  a calendar) are modeled in `jmap-client` but not surfaced in the UI yet.
-  Sharing a single *event* out to other apps on the device (Mail, Messages,
-  a different calendar app, …) is covered by the Share button described
-  above, which is unrelated to JMAP sharing.
+- Guests, reminders, and calendar sharing (see "What's implemented" above)
+  are all deliberately narrow editors, the same way the recurrence rule
+  editor is: one reminder, not an arbitrary set; two sharing tiers (view/
+  edit), not the full ten-permission `CalendarRights` model; guest roles
+  and RSVP status round-trip only through the plain-text conventions the
+  guest-list textarea itself defines. Saving the form always rewrites the
+  *entire* guests/reminder/sharing set from what's currently shown, so — as
+  with recurrence — a shape those simple editors can't represent (built by
+  another client) is replaced wholesale rather than preserved once you
+  save through this UI. Sending actual invitation emails to added guests
+  is up to the JMAP server, not this app; this app only writes the
+  `participants` property.
 - The ICS parser ignores `VTIMEZONE` blocks: a `DTSTART` with a `TZID`
   parameter but no trailing `Z` is treated as floating rather than
   resolved against the named zone. `VALARM`, `ATTENDEE`, and per-instance

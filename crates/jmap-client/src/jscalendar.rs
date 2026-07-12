@@ -418,6 +418,11 @@ pub struct Calendar {
     pub is_visible: bool,
     #[serde(default, rename = "myRights")]
     pub my_rights: Option<CalendarRights>,
+    /// Sharing grants: JMAP account id of the other user → the rights
+    /// granted to them (RFC 9670 §2, `Calendar/set` `shareWith`). Only
+    /// meaningful (and only settable) by the calendar's owner.
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "shareWith")]
+    pub share_with: Option<BTreeMap<Id, CalendarRights>>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
@@ -433,7 +438,36 @@ impl Calendar {
             is_subscribed: true,
             is_visible: true,
             my_rights: None,
+            share_with: None,
             extra: BTreeMap::new(),
+        }
+    }
+}
+
+impl CalendarRights {
+    /// Read-only access: see events/free-busy, nothing else.
+    pub fn view_only() -> Self {
+        Self {
+            may_read_free_busy: true,
+            may_read_items: true,
+            ..Default::default()
+        }
+    }
+
+    /// Read/write access to the calendar's content — not the calendar's own
+    /// admin/sharing/deletion rights, which this simple two-tier model
+    /// never grants.
+    pub fn can_edit() -> Self {
+        Self {
+            may_read_free_busy: true,
+            may_read_items: true,
+            may_add_items: true,
+            may_update_private: true,
+            may_update_own: true,
+            may_update_all: true,
+            may_remove_own: true,
+            may_remove_all: true,
+            ..Default::default()
         }
     }
 }

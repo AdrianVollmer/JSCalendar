@@ -36,6 +36,11 @@
       </label>
     </div>
 
+    <label class="field">
+      <span>Shared with <small>(one per line: <code>account-id: view</code> or <code>account-id: edit</code>)</small></span>
+      <textarea name="share_with" rows="3" placeholder="Optional — the other account's JMAP account id, not necessarily their email">{{ share_with }}</textarea>
+    </label>
+
     <footer class="event-form-footer">
       {% if is_edit %}
       <button type="submit" formaction="/app/calendar/{{ calendar_id }}/delete" formnovalidate hx-delete="/app/calendar/{{ calendar_id }}" hx-target="#modal-root" hx-swap="innerHTML" hx-confirm="Delete this calendar? Its events will be deleted too." class="btn btn-danger">Delete</button>
