@@ -1,29 +1,29 @@
-//! Durable local user accounts.
-//!
-//! Unlike the rest of this app's state, this genuinely persists to disk
-//! (`JSCAL_DATA_DIR/users.json`) — real user management (an admin creating
-//! accounts that need to still exist tomorrow) requires surviving a
-//! restart, unlike e.g. the in-memory-only ICS-subscription list.
+//! Durable server-side storage: user accounts, sessions, and ICS
+//! subscriptions, all backed by a single SQLite database
+//! (`JSCAL_DATA_DIR/jscalendar.db`).
 //!
 //! Each account carries its own upstream JMAP connection settings
 //! (`JmapSettings`), so the app password (verified, never stored in
 //! recoverable form) and the JMAP credentials (stored in recoverable form,
 //! since the server needs to actually present them to the JMAP server) are
-//! deliberately different things with different storage treatment.
+//! deliberately different things with different storage treatment. Display
+//! preferences (`DisplayPrefs`) live on the account too, so they follow a
+//! user across browsers/devices instead of being pinned to one browser's
+//! cookie.
 
 use std::path::PathBuf;
-use std::sync::RwLock;
+use std::sync::Mutex;
 
 use argon2::password_hash::rand_core::{OsRng, RngCore};
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::Argon2;
 use jmap_client::client::Credentials;
-use serde::{Deserialize, Serialize};
+use rusqlite::{params, Connection, OptionalExtension, Row};
 use uuid::Uuid;
 
 pub const BOOTSTRAP_ADMIN_USERNAME: &str = "admin";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
     Admin,
     User,
@@ -48,10 +48,8 @@ impl Role {
 
 /// One user's upstream JMAP connection. Stored in recoverable form (not
 /// hashed) since the server has to present it to the JMAP server on the
-/// user's behalf on every connection — this is the same trust boundary the
-/// app already had when credentials only ever lived in memory, just now
-/// also written to `users.json` (mode 0600) so it survives a restart.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// user's behalf on every connection.
+#[derive(Debug, Clone, Default)]
 pub struct JmapSettings {
     pub server_url: String,
     pub username: String,
@@ -79,106 +77,168 @@ impl JmapSettings {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Display preferences, overriding the server-wide `JSCAL_TIMEZONE`/
+/// `JSCAL_TIME_FORMAT`/`JSCAL_HOLIDAYS_REGION` defaults for this account.
+/// Each field is `""` for "use the server default"; `holidays_region` also
+/// accepts the literal `"none"` for "explicitly no holidays calendar",
+/// distinct from "" ("no opinion, use whatever the server has configured").
+#[derive(Debug, Clone, Default)]
+pub struct DisplayPrefs {
+    pub timezone: String,
+    pub time_format: String,
+    pub holidays_region: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct User {
     pub id: String,
     pub username: String,
     pub password_hash: String,
     pub role: Role,
-    #[serde(default)]
     pub jmap: JmapSettings,
+    pub prefs: DisplayPrefs,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SessionRecord {
-    token: String,
-    user_id: String,
-}
-
-#[derive(Debug, Default, Serialize, Deserialize)]
-struct StoreData {
-    #[serde(default)]
-    users: Vec<User>,
-    #[serde(default)]
-    sessions: Vec<SessionRecord>,
+/// A subscribed read-only calendar sourced from an external `.ics` URL.
+#[derive(Debug, Clone)]
+pub struct IcsSubscription {
+    pub id: String,
+    pub name: String,
+    pub color: String,
+    pub url: String,
 }
 
 pub struct UserStore {
-    path: PathBuf,
-    data: RwLock<StoreData>,
+    conn: Mutex<Connection>,
 }
 
-impl UserStore {
-    pub fn load(path: PathBuf) -> Self {
-        let data = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default();
-        Self {
-            path,
-            data: RwLock::new(data),
-        }
-    }
+fn row_to_user(row: &Row) -> rusqlite::Result<User> {
+    Ok(User {
+        id: row.get("id")?,
+        username: row.get("username")?,
+        password_hash: row.get("password_hash")?,
+        role: Role::parse(&row.get::<_, String>("role")?),
+        jmap: JmapSettings {
+            server_url: row.get("jmap_server_url")?,
+            username: row.get("jmap_username")?,
+            password: row.get("jmap_password")?,
+            token: row.get("jmap_token")?,
+        },
+        prefs: DisplayPrefs {
+            timezone: row.get("pref_timezone")?,
+            time_format: row.get("pref_time_format")?,
+            holidays_region: row.get("pref_holidays_region")?,
+        },
+    })
+}
 
-    fn persist(&self, data: &StoreData) {
-        if let Some(parent) = self.path.parent() {
+const USER_COLUMNS: &str = "id, username, password_hash, role, \
+    jmap_server_url, jmap_username, jmap_password, jmap_token, \
+    pref_timezone, pref_time_format, pref_holidays_region";
+
+impl UserStore {
+    /// Opens (creating if needed) the SQLite database at `path` and
+    /// ensures its schema exists. `path`'s parent directory is created if
+    /// missing; the file itself is chmod'd `0600` since it holds password
+    /// hashes and, for each account's JMAP settings, plaintext credentials.
+    pub fn open(path: PathBuf) -> Self {
+        if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        let Ok(json) = serde_json::to_string_pretty(data) else {
-            return;
-        };
-        let tmp = self.path.with_extension("json.tmp");
-        if std::fs::write(&tmp, json).is_err() {
-            return;
-        }
-        if std::fs::rename(&tmp, &self.path).is_err() {
-            return;
-        }
+        let conn = Connection::open(&path).expect("failed to open sqlite database");
+        conn.pragma_update(None, "journal_mode", "WAL")
+            .expect("failed to set journal_mode");
+        conn.pragma_update(None, "foreign_keys", "ON")
+            .expect("failed to enable foreign_keys");
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS users (
+                id TEXT PRIMARY KEY,
+                username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                password_hash TEXT NOT NULL,
+                role TEXT NOT NULL,
+                jmap_server_url TEXT NOT NULL DEFAULT '',
+                jmap_username TEXT NOT NULL DEFAULT '',
+                jmap_password TEXT NOT NULL DEFAULT '',
+                jmap_token TEXT NOT NULL DEFAULT '',
+                pref_timezone TEXT NOT NULL DEFAULT '',
+                pref_time_format TEXT NOT NULL DEFAULT '',
+                pref_holidays_region TEXT NOT NULL DEFAULT ''
+            );
+            CREATE TABLE IF NOT EXISTS sessions (
+                token TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS ics_subscriptions (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                color TEXT NOT NULL,
+                url TEXT NOT NULL
+            );",
+        )
+        .expect("failed to create schema");
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(0o600));
+            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        }
+        Self {
+            conn: Mutex::new(conn),
         }
     }
 
     pub fn list_users(&self) -> Vec<User> {
-        self.data.read().unwrap().users.clone()
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(&format!("SELECT {USER_COLUMNS} FROM users"))
+            .unwrap();
+        stmt.query_map([], row_to_user)
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect()
     }
 
     pub fn get_user(&self, id: &str) -> Option<User> {
-        self.data
-            .read()
-            .unwrap()
-            .users
-            .iter()
-            .find(|u| u.id == id)
-            .cloned()
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            &format!("SELECT {USER_COLUMNS} FROM users WHERE id = ?1"),
+            params![id],
+            row_to_user,
+        )
+        .optional()
+        .unwrap()
     }
 
     pub fn find_by_username(&self, username: &str) -> Option<User> {
-        self.data
-            .read()
-            .unwrap()
-            .users
-            .iter()
-            .find(|u| u.username.eq_ignore_ascii_case(username))
-            .cloned()
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            &format!("SELECT {USER_COLUMNS} FROM users WHERE username = ?1 COLLATE NOCASE"),
+            params![username],
+            row_to_user,
+        )
+        .optional()
+        .unwrap()
     }
 
     pub fn username_taken(&self, username: &str, excluding_id: Option<&str>) -> bool {
-        self.data.read().unwrap().users.iter().any(|u| {
-            u.username.eq_ignore_ascii_case(username) && excluding_id != Some(u.id.as_str())
-        })
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM users WHERE username = ?1 COLLATE NOCASE AND id != ?2)",
+            params![username, excluding_id.unwrap_or("")],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap()
+            != 0
     }
 
     pub fn admin_count(&self) -> usize {
-        self.data
-            .read()
-            .unwrap()
-            .users
-            .iter()
-            .filter(|u| u.role == Role::Admin)
-            .count()
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT COUNT(*) FROM users WHERE role = 'admin'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap() as usize
     }
 
     pub fn create_user(
@@ -194,58 +254,189 @@ impl UserStore {
             password_hash,
             role,
             jmap,
+            prefs: DisplayPrefs::default(),
         };
-        let mut guard = self.data.write().unwrap();
-        guard.users.push(user.clone());
-        self.persist(&guard);
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO users (id, username, password_hash, role, \
+                jmap_server_url, jmap_username, jmap_password, jmap_token) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                user.id,
+                user.username,
+                user.password_hash,
+                user.role.as_str(),
+                user.jmap.server_url,
+                user.jmap.username,
+                user.jmap.password,
+                user.jmap.token,
+            ],
+        )
+        .expect("insert user");
         user
     }
 
     pub fn update_user<F: FnOnce(&mut User)>(&self, id: &str, f: F) -> Option<User> {
-        let mut guard = self.data.write().unwrap();
-        let user = guard.users.iter_mut().find(|u| u.id == id)?;
-        f(user);
-        let updated = user.clone();
-        self.persist(&guard);
-        Some(updated)
+        let conn = self.conn.lock().unwrap();
+        let mut user = conn
+            .query_row(
+                &format!("SELECT {USER_COLUMNS} FROM users WHERE id = ?1"),
+                params![id],
+                row_to_user,
+            )
+            .optional()
+            .unwrap()?;
+        f(&mut user);
+        conn.execute(
+            "UPDATE users SET username = ?2, password_hash = ?3, role = ?4, \
+                jmap_server_url = ?5, jmap_username = ?6, jmap_password = ?7, jmap_token = ?8, \
+                pref_timezone = ?9, pref_time_format = ?10, pref_holidays_region = ?11 \
+             WHERE id = ?1",
+            params![
+                user.id,
+                user.username,
+                user.password_hash,
+                user.role.as_str(),
+                user.jmap.server_url,
+                user.jmap.username,
+                user.jmap.password,
+                user.jmap.token,
+                user.prefs.timezone,
+                user.prefs.time_format,
+                user.prefs.holidays_region,
+            ],
+        )
+        .expect("update user");
+        Some(user)
     }
 
     pub fn delete_user(&self, id: &str) -> bool {
-        let mut guard = self.data.write().unwrap();
-        let before = guard.users.len();
-        guard.users.retain(|u| u.id != id);
-        guard.sessions.retain(|s| s.user_id != id);
-        let changed = guard.users.len() != before;
-        if changed {
-            self.persist(&guard);
-        }
-        changed
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM users WHERE id = ?1", params![id])
+            .expect("delete user")
+            > 0
     }
 
     pub fn create_session(&self, user_id: String) -> String {
         let token = Uuid::new_v4().to_string();
-        let mut guard = self.data.write().unwrap();
-        guard.sessions.push(SessionRecord {
-            token: token.clone(),
-            user_id,
-        });
-        self.persist(&guard);
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO sessions (token, user_id) VALUES (?1, ?2)",
+            params![token, user_id],
+        )
+        .expect("insert session");
         token
     }
 
     pub fn user_for_session(&self, token: &str) -> Option<User> {
-        let guard = self.data.read().unwrap();
-        let rec = guard.sessions.iter().find(|s| s.token == token)?;
-        guard.users.iter().find(|u| u.id == rec.user_id).cloned()
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            &format!(
+                "SELECT {} FROM users JOIN sessions ON sessions.user_id = users.id \
+                 WHERE sessions.token = ?1",
+                USER_COLUMNS
+                    .split(", ")
+                    .map(|c| format!("users.{c}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            params![token],
+            row_to_user,
+        )
+        .optional()
+        .unwrap()
     }
 
     pub fn delete_session(&self, token: &str) {
-        let mut guard = self.data.write().unwrap();
-        let before = guard.sessions.len();
-        guard.sessions.retain(|s| s.token != token);
-        if guard.sessions.len() != before {
-            self.persist(&guard);
-        }
+        let conn = self.conn.lock().unwrap();
+        let _ = conn.execute("DELETE FROM sessions WHERE token = ?1", params![token]);
+    }
+
+    pub fn list_ics_subscriptions(&self, user_id: &str) -> Vec<IcsSubscription> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT id, name, color, url FROM ics_subscriptions WHERE user_id = ?1")
+            .unwrap();
+        stmt.query_map(params![user_id], |row| {
+            Ok(IcsSubscription {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                color: row.get(2)?,
+                url: row.get(3)?,
+            })
+        })
+        .unwrap()
+        .filter_map(Result::ok)
+        .collect()
+    }
+
+    pub fn get_ics_subscription(&self, user_id: &str, id: &str) -> Option<IcsSubscription> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT id, name, color, url FROM ics_subscriptions WHERE user_id = ?1 AND id = ?2",
+            params![user_id, id],
+            |row| {
+                Ok(IcsSubscription {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    color: row.get(2)?,
+                    url: row.get(3)?,
+                })
+            },
+        )
+        .optional()
+        .unwrap()
+    }
+
+    pub fn create_ics_subscription(
+        &self,
+        user_id: &str,
+        name: String,
+        color: String,
+        url: String,
+    ) -> IcsSubscription {
+        let sub = IcsSubscription {
+            id: Uuid::new_v4().to_string(),
+            name,
+            color,
+            url,
+        };
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO ics_subscriptions (id, user_id, name, color, url) \
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![sub.id, user_id, sub.name, sub.color, sub.url],
+        )
+        .expect("insert ics subscription");
+        sub
+    }
+
+    pub fn update_ics_subscription(
+        &self,
+        user_id: &str,
+        id: &str,
+        name: String,
+        color: String,
+        url: String,
+    ) -> bool {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE ics_subscriptions SET name = ?3, color = ?4, url = ?5 \
+             WHERE user_id = ?1 AND id = ?2",
+            params![user_id, id, name, color, url],
+        )
+        .expect("update ics subscription")
+            > 0
+    }
+
+    pub fn delete_ics_subscription(&self, user_id: &str, id: &str) -> bool {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM ics_subscriptions WHERE user_id = ?1 AND id = ?2",
+            params![user_id, id],
+        )
+        .expect("delete ics subscription")
+            > 0
     }
 }
 

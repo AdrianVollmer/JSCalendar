@@ -19,6 +19,7 @@ use uuid::Uuid;
 use crate::auth::{AppUser, AuthedSession};
 use crate::error::AppError;
 use crate::state::AppState;
+use crate::vcard;
 use crate::view::{self, ViewKind, ViewParams};
 use crate::webutil::{is_hx, render};
 
@@ -202,27 +203,11 @@ fn fetch_holidays(state: &AppState, params: &ViewParams) -> Vec<(NaiveDate, Stri
     out
 }
 
-/// Keyed the same way as `contacts_cache_key`, but against the primary
-/// (calendar) account rather than the contacts account, since ICS
-/// subscriptions overlay onto the main calendar views.
-fn ics_account_key(session: &AuthedSession) -> String {
-    let api_url = session
-        .client
-        .session()
-        .map(|s| s.api_url.clone())
-        .unwrap_or_default();
-    format!("{api_url}#{}", session.account_id)
-}
-
 fn ics_subscriptions_for(
     state: &AppState,
     session: &AuthedSession,
-) -> Vec<crate::state::IcsSubscription> {
-    state
-        .ics_subscriptions
-        .get(&ics_account_key(session))
-        .map(|v| v.clone())
-        .unwrap_or_default()
+) -> Vec<crate::users::IcsSubscription> {
+    state.users.list_ics_subscriptions(&session.user_id)
 }
 
 fn ics_subscription_ids(state: &AppState, session: &AuthedSession) -> Vec<String> {
@@ -239,7 +224,7 @@ const ICS_MAX_RESPONSE_BYTES: usize = 5 * 1024 * 1024;
 
 async fn fetch_and_parse_ics(
     state: &AppState,
-    sub: &crate::state::IcsSubscription,
+    sub: &crate::users::IcsSubscription,
 ) -> Result<Vec<CalendarEvent>, String> {
     let parsed = url::Url::parse(&sub.url).map_err(|e| format!("invalid URL: {e}"))?;
     let host = parsed.host_str().ok_or("URL has no host")?;
@@ -280,7 +265,7 @@ async fn fetch_and_parse_ics(
 /// events rather than blanking the subscription out of the view.
 async fn get_ics_events_cached(
     state: &AppState,
-    sub: &crate::state::IcsSubscription,
+    sub: &crate::users::IcsSubscription,
 ) -> Vec<CalendarEvent> {
     let ttl = std::time::Duration::from_secs(crate::state::ICS_CACHE_TTL_SECS);
     if let Some(entry) = state.ics_cache.get(&sub.id) {
@@ -586,7 +571,7 @@ fn sidebar_calendars(
 /// "Subscriptions" section.
 fn sidebar_ics_subscriptions(
     state: &AppState,
-    subs: &[crate::state::IcsSubscription],
+    subs: &[crate::users::IcsSubscription],
     params: &ViewParams,
 ) -> Vec<SidebarCalendarVM> {
     let back_qs = params.query_string(params.view, params.date);
@@ -791,7 +776,7 @@ pub async fn app_view(
     Query(raw): Query<RawViewQuery>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    let state = crate::prefs::apply(state, &headers);
+    let state = crate::state::apply_display_prefs(state, &session.prefs);
     let today = today_in(state.viewer_tz);
     let calendars = session.client.get_calendars(&session.account_id).await?;
     let params = resolve_view_params(
@@ -1036,7 +1021,7 @@ pub async fn event_new_form(
     Query(raw): Query<RawViewQuery>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    let state = crate::prefs::apply(state, &headers);
+    let state = crate::state::apply_display_prefs(state, &session.prefs);
     let today = today_in(state.viewer_tz);
     let calendars = session.client.get_calendars(&session.account_id).await?;
     let params = resolve_view_params(
@@ -1068,7 +1053,7 @@ pub async fn event_edit_form(
     Query(raw): Query<RawViewQuery>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    let state = crate::prefs::apply(state, &headers);
+    let state = crate::state::apply_display_prefs(state, &session.prefs);
     let today = today_in(state.viewer_tz);
     let calendars = session.client.get_calendars(&session.account_id).await?;
     let params = resolve_view_params(
@@ -1266,7 +1251,7 @@ pub async fn event_create(
     headers: HeaderMap,
     Form(form): Form<EventFormBody>,
 ) -> Result<Response, AppError> {
-    let state = crate::prefs::apply(state, &headers);
+    let state = crate::state::apply_display_prefs(state, &session.prefs);
     let uid = Uuid::new_v4().to_string();
     let event = match build_event_from_form(&form, uid) {
         Ok(e) => e,
@@ -1295,7 +1280,7 @@ pub async fn event_update(
     headers: HeaderMap,
     Form(form): Form<EventFormBody>,
 ) -> Result<Response, AppError> {
-    let state = crate::prefs::apply(state, &headers);
+    let state = crate::state::apply_display_prefs(state, &session.prefs);
     let event = match build_event_from_form(&form, String::new()) {
         Ok(e) => e,
         Err(msg) => return render_form_error(&state, &session, &form, true, Some(id), msg).await,
@@ -1384,7 +1369,7 @@ pub async fn event_delete_hx(
     headers: HeaderMap,
     Query(form): Query<DeleteFormBody>,
 ) -> Result<Response, AppError> {
-    let state = crate::prefs::apply(state, &headers);
+    let state = crate::state::apply_display_prefs(state, &session.prefs);
     event_delete_inner(&state, &session, &id, &headers, &form).await
 }
 
@@ -1395,7 +1380,7 @@ pub async fn event_delete_post(
     headers: HeaderMap,
     Form(form): Form<DeleteFormBody>,
 ) -> Result<Response, AppError> {
-    let state = crate::prefs::apply(state, &headers);
+    let state = crate::state::apply_display_prefs(state, &session.prefs);
     event_delete_inner(&state, &session, &id, &headers, &form).await
 }
 
@@ -1535,7 +1520,7 @@ pub async fn contact_new_form(
     Query(raw): Query<RawViewQuery>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    let state = crate::prefs::apply(state, &headers);
+    let state = crate::state::apply_display_prefs(state, &session.prefs);
     let today = today_in(state.viewer_tz);
     let calendars = session.client.get_calendars(&session.account_id).await?;
     let params = resolve_view_params(
@@ -1571,7 +1556,7 @@ pub async fn contact_edit_form(
     Query(raw): Query<RawViewQuery>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    let state = crate::prefs::apply(state, &headers);
+    let state = crate::state::apply_display_prefs(state, &session.prefs);
     let today = today_in(state.viewer_tz);
     let calendars = session.client.get_calendars(&session.account_id).await?;
     let params = resolve_view_params(
@@ -1605,6 +1590,260 @@ pub async fn contact_edit_form(
     } else {
         let parts = build_shell_parts(&session, &state, &calendars, &params, today).await?;
         let ctx = parts.into_shell(Some(modal_html));
+        Ok(render(&ctx))
+    }
+}
+
+// ---- Contact bulk import --------------------------------------------------
+
+struct ImportResult {
+    imported: usize,
+    skipped: usize,
+}
+
+#[derive(Template)]
+#[template(path = "contact_import_form.html")]
+struct ContactImportTemplate {
+    back_date: String,
+    back_cal: String,
+    error: Option<String>,
+    result: Option<ImportResult>,
+}
+
+pub async fn contact_import_form(
+    State(state): State<AppState>,
+    session: AuthedSession,
+    Query(raw): Query<RawViewQuery>,
+    headers: HeaderMap,
+) -> Result<Response, AppError> {
+    let state = crate::state::apply_display_prefs(state, &session.prefs);
+    let today = today_in(state.viewer_tz);
+    let calendars = session.client.get_calendars(&session.account_id).await?;
+    let params = resolve_view_params(
+        &raw,
+        &calendars,
+        today,
+        session.contacts_account_id.is_some(),
+        &ics_subscription_ids(&state, &session),
+        state.holidays_region.is_some(),
+    );
+    let form = ContactImportTemplate {
+        back_date: params.date.format("%Y-%m-%d").to_string(),
+        back_cal: params.cal_param(),
+        error: None,
+        result: None,
+    };
+    let modal_html = form
+        .render()
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+
+    if is_hx(&headers) {
+        Ok(Html(modal_html).into_response())
+    } else {
+        let parts = build_shell_parts(&session, &state, &calendars, &params, today).await?;
+        let ctx = parts.into_shell(Some(modal_html));
+        Ok(render(&ctx))
+    }
+}
+
+fn card_from_parsed_contact(c: &vcard::ParsedContact, uid: String, address_book_id: &str) -> Card {
+    let mut card = Card::new(uid);
+    card.name = Some(NameProperty {
+        full: Some(c.name.clone()),
+        ..Default::default()
+    });
+    if let Some(email) = &c.email {
+        let mut emails = BTreeMap::new();
+        emails.insert(
+            "e1".to_string(),
+            EmailAddress {
+                address: email.clone(),
+                ..Default::default()
+            },
+        );
+        card.emails = Some(emails);
+    }
+    if let Some((date, has_year)) = c.birthday {
+        let date_value = if has_year {
+            AnniversaryDate::Timestamp {
+                utc: format!("{}T00:00:00Z", date.format("%Y-%m-%d")),
+            }
+        } else {
+            AnniversaryDate::PartialDate {
+                year: None,
+                month: Some(date.month()),
+                day: Some(date.day()),
+            }
+        };
+        let mut anniversaries = BTreeMap::new();
+        anniversaries.insert(
+            "bday".to_string(),
+            Anniversary {
+                type_: "Anniversary".to_string(),
+                kind: Some("birth".to_string()),
+                date: date_value,
+                extra: BTreeMap::new(),
+            },
+        );
+        card.anniversaries = Some(anniversaries);
+    }
+    let mut address_book_ids = BTreeMap::new();
+    address_book_ids.insert(address_book_id.to_string(), true);
+    card.address_book_ids = Some(address_book_ids);
+    card
+}
+
+/// A single upload could otherwise turn into thousands of sequential
+/// `ContactCard/set` calls; asking the user to split an unreasonably large
+/// export is simpler than a background job for what's meant to be a quick
+/// one-off import.
+const MAX_IMPORT_CONTACTS: usize = 500;
+
+pub async fn contact_import(
+    State(state): State<AppState>,
+    session: AuthedSession,
+    headers: HeaderMap,
+    mut multipart: axum::extract::Multipart,
+) -> Result<Response, AppError> {
+    let state = crate::state::apply_display_prefs(state, &session.prefs);
+    let mut back_date = String::new();
+    let mut back_cal = String::new();
+    let mut file_text: Option<String> = None;
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| AppError::bad_request(e.to_string()))?
+    {
+        match field.name().unwrap_or("") {
+            "back_date" => back_date = field.text().await.unwrap_or_default(),
+            "back_cal" => back_cal = field.text().await.unwrap_or_default(),
+            "file" => {
+                let bytes = field
+                    .bytes()
+                    .await
+                    .map_err(|e| AppError::bad_request(e.to_string()))?;
+                file_text = Some(String::from_utf8_lossy(&bytes).into_owned());
+            }
+            _ => {}
+        }
+    }
+
+    let render_error = |msg: &str| ContactImportTemplate {
+        back_date: back_date.clone(),
+        back_cal: back_cal.clone(),
+        error: Some(msg.to_string()),
+        result: None,
+    };
+
+    let Some(contacts_account_id) = session.contacts_account_id.clone() else {
+        let body = render_error("this server does not support contacts")
+            .render()
+            .map_err(|e| AppError::bad_request(e.to_string()))?;
+        return Ok(Html(body).into_response());
+    };
+    let Some(text) = file_text else {
+        let body = render_error("choose a .vcf file to import")
+            .render()
+            .map_err(|e| AppError::bad_request(e.to_string()))?;
+        return Ok(Html(body).into_response());
+    };
+
+    let parsed = vcard::parse_vcards(&text);
+    if parsed.is_empty() {
+        let body = render_error("no contacts found in that file")
+            .render()
+            .map_err(|e| AppError::bad_request(e.to_string()))?;
+        return Ok(Html(body).into_response());
+    }
+    if parsed.len() > MAX_IMPORT_CONTACTS {
+        let body = render_error(&format!(
+            "that file has {} contacts; please split it into batches of {MAX_IMPORT_CONTACTS} or fewer",
+            parsed.len()
+        ))
+        .render()
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+        return Ok(Html(body).into_response());
+    }
+
+    let address_books = session
+        .client
+        .get_address_books(&contacts_account_id)
+        .await?;
+    let Some(address_book_id) = address_books.first().and_then(|a| a.id.clone()) else {
+        let body = render_error("no address book to import into")
+            .render()
+            .map_err(|e| AppError::bad_request(e.to_string()))?;
+        return Ok(Html(body).into_response());
+    };
+
+    let mut imported = 0usize;
+    let mut skipped = 0usize;
+    for contact in &parsed {
+        let uid = Uuid::new_v4().to_string();
+        let card = card_from_parsed_contact(contact, uid, &address_book_id);
+        match session
+            .client
+            .create_contact_card(&contacts_account_id, &card)
+            .await
+        {
+            Ok(_) => imported += 1,
+            Err(_) => skipped += 1,
+        }
+    }
+    invalidate_contacts_cache(&state, &session, &contacts_account_id);
+
+    let result_tpl = ContactImportTemplate {
+        back_date: back_date.clone(),
+        back_cal: back_cal.clone(),
+        error: None,
+        result: Some(ImportResult { imported, skipped }),
+    };
+    let result_html = result_tpl
+        .render()
+        .map_err(|e| AppError::bad_request(e.to_string()))?;
+
+    if is_hx(&headers) {
+        let today = today_in(state.viewer_tz);
+        let calendars = session.client.get_calendars(&session.account_id).await?;
+        let raw = RawViewQuery {
+            view: Some(ViewKind::Contacts.as_str().to_string()),
+            date: Some(back_date.clone()),
+            cal: Some(back_cal.clone()),
+            q: None,
+        };
+        let params = resolve_view_params(
+            &raw,
+            &calendars,
+            today,
+            true,
+            &ics_subscription_ids(&state, &session),
+            state.holidays_region.is_some(),
+        );
+        let fragment = render_fragment(&session, &state, &calendars, &params, today).await?;
+        let body = format!(
+            r#"{result_html}<div id="view" class="view-container" hx-swap-oob="true">{fragment}</div>"#
+        );
+        Ok(Html(body).into_response())
+    } else {
+        let today = today_in(state.viewer_tz);
+        let calendars = session.client.get_calendars(&session.account_id).await?;
+        let raw = RawViewQuery {
+            view: Some(ViewKind::Contacts.as_str().to_string()),
+            date: Some(back_date),
+            cal: Some(back_cal),
+            q: None,
+        };
+        let params = resolve_view_params(
+            &raw,
+            &calendars,
+            today,
+            true,
+            &ics_subscription_ids(&state, &session),
+            state.holidays_region.is_some(),
+        );
+        let parts = build_shell_parts(&session, &state, &calendars, &params, today).await?;
+        let ctx = parts.into_shell(Some(result_html));
         Ok(render(&ctx))
     }
 }
@@ -1730,7 +1969,7 @@ pub async fn contact_create(
     headers: HeaderMap,
     Form(form): Form<ContactFormBody>,
 ) -> Result<Response, AppError> {
-    let state = crate::prefs::apply(state, &headers);
+    let state = crate::state::apply_display_prefs(state, &session.prefs);
     let Some(contacts_account_id) = session.contacts_account_id.clone() else {
         return Err(AppError::bad_request(
             "this server does not support contacts",
@@ -1767,7 +2006,7 @@ pub async fn contact_update(
     headers: HeaderMap,
     Form(form): Form<ContactFormBody>,
 ) -> Result<Response, AppError> {
-    let state = crate::prefs::apply(state, &headers);
+    let state = crate::state::apply_display_prefs(state, &session.prefs);
     let Some(contacts_account_id) = session.contacts_account_id.clone() else {
         return Err(AppError::bad_request(
             "this server does not support contacts",
@@ -1817,7 +2056,7 @@ pub async fn contact_delete_hx(
     headers: HeaderMap,
     Query(form): Query<ContactDeleteFormBody>,
 ) -> Result<Response, AppError> {
-    let state = crate::prefs::apply(state, &headers);
+    let state = crate::state::apply_display_prefs(state, &session.prefs);
     contact_delete_inner(&state, &session, &id, &headers, &form).await
 }
 
@@ -1828,7 +2067,7 @@ pub async fn contact_delete_post(
     headers: HeaderMap,
     Form(form): Form<ContactDeleteFormBody>,
 ) -> Result<Response, AppError> {
-    let state = crate::prefs::apply(state, &headers);
+    let state = crate::state::apply_display_prefs(state, &session.prefs);
     contact_delete_inner(&state, &session, &id, &headers, &form).await
 }
 
@@ -1923,7 +2162,7 @@ pub async fn calendar_new_form(
     Query(raw): Query<RawViewQuery>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    let state = crate::prefs::apply(state, &headers);
+    let state = crate::state::apply_display_prefs(state, &session.prefs);
     let today = today_in(state.viewer_tz);
     let calendars = session.client.get_calendars(&session.account_id).await?;
     let params = resolve_view_params(
@@ -1955,7 +2194,7 @@ pub async fn calendar_edit_form(
     Query(raw): Query<RawViewQuery>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    let state = crate::prefs::apply(state, &headers);
+    let state = crate::state::apply_display_prefs(state, &session.prefs);
     let today = today_in(state.viewer_tz);
     let calendars = session.client.get_calendars(&session.account_id).await?;
     let params = resolve_view_params(
@@ -2110,7 +2349,7 @@ pub async fn calendar_create(
     headers: HeaderMap,
     Form(form): Form<CalendarFormBody>,
 ) -> Result<Response, AppError> {
-    let state = crate::prefs::apply(state, &headers);
+    let state = crate::state::apply_display_prefs(state, &session.prefs);
     let calendar = match build_calendar_from_form(&form) {
         Ok(c) => c,
         Err(msg) => {
@@ -2148,7 +2387,7 @@ pub async fn calendar_update(
     headers: HeaderMap,
     Form(form): Form<CalendarFormBody>,
 ) -> Result<Response, AppError> {
-    let state = crate::prefs::apply(state, &headers);
+    let state = crate::state::apply_display_prefs(state, &session.prefs);
     let calendar = match build_calendar_from_form(&form) {
         Ok(c) => c,
         Err(msg) => {
@@ -2189,7 +2428,7 @@ pub async fn calendar_delete_hx(
     headers: HeaderMap,
     Query(form): Query<CalendarDeleteFormBody>,
 ) -> Result<Response, AppError> {
-    let state = crate::prefs::apply(state, &headers);
+    let state = crate::state::apply_display_prefs(state, &session.prefs);
     calendar_delete_inner(&state, &session, &id, &headers, &form).await
 }
 
@@ -2200,7 +2439,7 @@ pub async fn calendar_delete_post(
     headers: HeaderMap,
     Form(form): Form<CalendarDeleteFormBody>,
 ) -> Result<Response, AppError> {
-    let state = crate::prefs::apply(state, &headers);
+    let state = crate::state::apply_display_prefs(state, &session.prefs);
     calendar_delete_inner(&state, &session, &id, &headers, &form).await
 }
 
@@ -2261,7 +2500,7 @@ fn blank_ics_form(params: &ViewParams, error: Option<String>) -> IcsFormTemplate
 }
 
 fn ics_sub_to_form(
-    sub: &crate::state::IcsSubscription,
+    sub: &crate::users::IcsSubscription,
     params: &ViewParams,
     error: Option<String>,
 ) -> IcsFormTemplate {
@@ -2285,7 +2524,7 @@ pub async fn ics_new_form(
     Query(raw): Query<RawViewQuery>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    let state = crate::prefs::apply(state, &headers);
+    let state = crate::state::apply_display_prefs(state, &session.prefs);
     let today = today_in(state.viewer_tz);
     let calendars = session.client.get_calendars(&session.account_id).await?;
     let params = resolve_view_params(
@@ -2317,7 +2556,7 @@ pub async fn ics_edit_form(
     Query(raw): Query<RawViewQuery>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    let state = crate::prefs::apply(state, &headers);
+    let state = crate::state::apply_display_prefs(state, &session.prefs);
     let today = today_in(state.viewer_tz);
     let calendars = session.client.get_calendars(&session.account_id).await?;
     let params = resolve_view_params(
@@ -2328,9 +2567,9 @@ pub async fn ics_edit_form(
         &ics_subscription_ids(&state, &session),
         state.holidays_region.is_some(),
     );
-    let sub = ics_subscriptions_for(&state, &session)
-        .into_iter()
-        .find(|s| s.id == id)
+    let sub = state
+        .users
+        .get_ics_subscription(&session.user_id, &id)
         .ok_or(jmap_client::Error::NotFound)?;
     let form = ics_sub_to_form(&sub, &params, None);
     let modal_html = form
@@ -2494,24 +2733,15 @@ pub async fn ics_create(
     headers: HeaderMap,
     Form(form): Form<IcsFormBody>,
 ) -> Result<Response, AppError> {
-    let state = crate::prefs::apply(state, &headers);
+    let state = crate::state::apply_display_prefs(state, &session.prefs);
     let (name, color, url) = match validate_ics_form(&form).await {
         Ok(v) => v,
         Err(msg) => return render_ics_form_error(&state, &session, &form, false, None, msg).await,
     };
-    let sub = crate::state::IcsSubscription {
-        id: Uuid::new_v4().to_string(),
-        name,
-        color,
-        url,
-    };
-    let account_key = ics_account_key(&session);
+    let sub = state
+        .users
+        .create_ics_subscription(&session.user_id, name, color, url);
     let new_id = sub.id.clone();
-    state
-        .ics_subscriptions
-        .entry(account_key)
-        .or_default()
-        .push(sub);
 
     let mut back_cal = form.back_cal.clone();
     let pseudo_id = crate::ics::pseudo_calendar_id(&new_id);
@@ -2540,23 +2770,16 @@ pub async fn ics_update(
     headers: HeaderMap,
     Form(form): Form<IcsFormBody>,
 ) -> Result<Response, AppError> {
-    let state = crate::prefs::apply(state, &headers);
+    let state = crate::state::apply_display_prefs(state, &session.prefs);
     let (name, color, url) = match validate_ics_form(&form).await {
         Ok(v) => v,
         Err(msg) => {
             return render_ics_form_error(&state, &session, &form, true, Some(id), msg).await
         }
     };
-    let account_key = ics_account_key(&session);
-    let mut found = false;
-    if let Some(mut subs) = state.ics_subscriptions.get_mut(&account_key) {
-        if let Some(sub) = subs.iter_mut().find(|s| s.id == id) {
-            sub.name = name;
-            sub.color = color;
-            sub.url = url;
-            found = true;
-        }
-    }
+    let found = state
+        .users
+        .update_ics_subscription(&session.user_id, &id, name, color, url);
     if !found {
         return Err(jmap_client::Error::NotFound.into());
     }
@@ -2589,7 +2812,7 @@ pub async fn ics_delete_hx(
     headers: HeaderMap,
     Query(form): Query<IcsDeleteFormBody>,
 ) -> Result<Response, AppError> {
-    let state = crate::prefs::apply(state, &headers);
+    let state = crate::state::apply_display_prefs(state, &session.prefs);
     ics_delete_inner(&state, &session, &id, &headers, &form).await
 }
 
@@ -2600,7 +2823,7 @@ pub async fn ics_delete_post(
     headers: HeaderMap,
     Form(form): Form<IcsDeleteFormBody>,
 ) -> Result<Response, AppError> {
-    let state = crate::prefs::apply(state, &headers);
+    let state = crate::state::apply_display_prefs(state, &session.prefs);
     ics_delete_inner(&state, &session, &id, &headers, &form).await
 }
 
@@ -2611,10 +2834,7 @@ async fn ics_delete_inner(
     headers: &HeaderMap,
     form: &IcsDeleteFormBody,
 ) -> Result<Response, AppError> {
-    let account_key = ics_account_key(session);
-    if let Some(mut subs) = state.ics_subscriptions.get_mut(&account_key) {
-        subs.retain(|s| s.id != id);
-    }
+    state.users.delete_ics_subscription(&session.user_id, id);
     state.ics_cache.remove(id);
     ics_mutation_response(
         state,
@@ -2737,11 +2957,6 @@ struct SettingsTemplate {
     server_default_holidays: String,
     server_default_time_format: String,
     saved: bool,
-    /// Whether the `jscal_prefs` cookie set at least one field — when it
-    /// hasn't (e.g. a cleared cookie), the settings page's own script uses
-    /// this to decide whether it's safe to prefill the form from
-    /// `localStorage` instead.
-    has_override: bool,
     jmap_server_url: String,
     jmap_username: String,
     jmap_password: String,
@@ -2755,52 +2970,45 @@ pub struct SettingsQuery {
     saved: bool,
 }
 
+fn server_default_labels(state: &AppState) -> (String, String, String) {
+    let holidays = state
+        .holidays_region
+        .map(crate::state::german_region_name)
+        .map(|name| {
+            GERMAN_REGION_LABELS
+                .iter()
+                .find(|(n, _)| *n == name)
+                .map(|(_, label)| label.to_string())
+                .unwrap_or_else(|| name.to_string())
+        })
+        .unwrap_or_else(|| "None".to_string());
+    let time_format = match state.time_format {
+        crate::state::TimeFormat::Twelve => "12-hour".to_string(),
+        crate::state::TimeFormat::TwentyFour => "24-hour".to_string(),
+    };
+    (state.viewer_tz.to_string(), holidays, time_format)
+}
+
 pub async fn settings_form(
     State(state): State<AppState>,
     user: AppUser,
-    headers: HeaderMap,
     Query(q): Query<SettingsQuery>,
 ) -> Response {
-    let prefs = crate::prefs::UserPrefs::from_headers(&headers);
-    let has_override =
-        prefs.timezone.is_some() || prefs.holidays_region.is_some() || prefs.time_format.is_some();
-    let timezone = prefs.timezone.map(|tz| tz.to_string()).unwrap_or_default();
-    let holidays_region = match prefs.holidays_region {
-        None => String::new(),
-        Some(None) => "none".to_string(),
-        Some(Some(region)) => crate::state::german_region_name(region).to_string(),
-    };
-    let time_format = prefs
-        .time_format
-        .map(|f| f.as_str().to_string())
-        .unwrap_or_default();
     let jmap = state
         .users
         .get_user(&user.user_id)
         .map(|u| u.jmap)
         .unwrap_or_default();
+    let (server_default_timezone, server_default_holidays, server_default_time_format) =
+        server_default_labels(&state);
     render(&SettingsTemplate {
-        timezones: display_tz_options(&timezone),
-        holiday_regions: holiday_region_options(&holidays_region),
-        time_formats: time_format_options(&time_format),
-        server_default_timezone: state.viewer_tz.to_string(),
-        server_default_holidays: state
-            .holidays_region
-            .map(crate::state::german_region_name)
-            .map(|name| {
-                GERMAN_REGION_LABELS
-                    .iter()
-                    .find(|(n, _)| *n == name)
-                    .map(|(_, label)| label.to_string())
-                    .unwrap_or_else(|| name.to_string())
-            })
-            .unwrap_or_else(|| "None".to_string()),
-        server_default_time_format: match state.time_format {
-            crate::state::TimeFormat::Twelve => "12-hour".to_string(),
-            crate::state::TimeFormat::TwentyFour => "24-hour".to_string(),
-        },
+        timezones: display_tz_options(&user.prefs.timezone),
+        holiday_regions: holiday_region_options(&user.prefs.holidays_region),
+        time_formats: time_format_options(&user.prefs.time_format),
+        server_default_timezone,
+        server_default_holidays,
+        server_default_time_format,
         saved: q.saved,
-        has_override,
         jmap_server_url: jmap.server_url,
         jmap_username: jmap.username,
         jmap_password: jmap.password,
@@ -2840,15 +3048,10 @@ pub async fn settings_save(
 ) -> Response {
     if !form.new_password.is_empty() || !form.new_password_confirm.is_empty() {
         if form.new_password != form.new_password_confirm {
-            return password_change_error(&state, &user, &headers, "Passwords do not match.");
+            return password_change_error(&state, &user, "Passwords do not match.");
         }
         if form.new_password.len() < 8 {
-            return password_change_error(
-                &state,
-                &user,
-                &headers,
-                "Password must be at least 8 characters.",
-            );
+            return password_change_error(&state, &user, "Password must be at least 8 characters.");
         }
         let hash = crate::users::hash_password(&form.new_password);
         state
@@ -2862,69 +3065,36 @@ pub async fn settings_save(
         password: form.jmap_password,
         token: form.jmap_token.trim().to_string(),
     };
-    state.users.update_user(&user.user_id, |u| u.jmap = jmap);
+    let prefs = crate::users::DisplayPrefs {
+        timezone: form.timezone.clone(),
+        time_format: form.time_format.clone(),
+        holidays_region: form.holidays_region.clone(),
+    };
+    state.users.update_user(&user.user_id, |u| {
+        u.jmap = jmap;
+        u.prefs = prefs;
+    });
     state.jmap_clients.remove(&user.user_id);
 
-    let value = crate::prefs::encode(&form.timezone, &form.holidays_region, &form.time_format);
-    let mut cookie = axum_extra::extract::cookie::Cookie::new(crate::prefs::PREFS_COOKIE, value);
-    cookie.set_path("/");
-    cookie.set_same_site(axum_extra::extract::cookie::SameSite::Lax);
-    cookie.set_secure(crate::webutil::is_https(&headers));
-    cookie.set_max_age(time::Duration::days(365));
-    let jar = axum_extra::extract::cookie::CookieJar::new().add(cookie);
-    (
-        jar,
-        crate::webutil::redirect("/app/settings?saved=true", &headers),
-    )
-        .into_response()
+    crate::webutil::redirect("/app/settings?saved=true", &headers)
 }
 
-fn password_change_error(
-    state: &AppState,
-    user: &AppUser,
-    headers: &HeaderMap,
-    msg: &str,
-) -> Response {
-    let prefs = crate::prefs::UserPrefs::from_headers(headers);
-    let has_override =
-        prefs.timezone.is_some() || prefs.holidays_region.is_some() || prefs.time_format.is_some();
-    let timezone = prefs.timezone.map(|tz| tz.to_string()).unwrap_or_default();
-    let holidays_region = match prefs.holidays_region {
-        None => String::new(),
-        Some(None) => "none".to_string(),
-        Some(Some(region)) => crate::state::german_region_name(region).to_string(),
-    };
-    let time_format = prefs
-        .time_format
-        .map(|f| f.as_str().to_string())
-        .unwrap_or_default();
+fn password_change_error(state: &AppState, user: &AppUser, msg: &str) -> Response {
     let jmap = state
         .users
         .get_user(&user.user_id)
         .map(|u| u.jmap)
         .unwrap_or_default();
+    let (server_default_timezone, server_default_holidays, server_default_time_format) =
+        server_default_labels(state);
     render(&SettingsTemplate {
-        timezones: display_tz_options(&timezone),
-        holiday_regions: holiday_region_options(&holidays_region),
-        time_formats: time_format_options(&time_format),
-        server_default_timezone: state.viewer_tz.to_string(),
-        server_default_holidays: state
-            .holidays_region
-            .map(crate::state::german_region_name)
-            .map(|name| {
-                GERMAN_REGION_LABELS
-                    .iter()
-                    .find(|(n, _)| *n == name)
-                    .map(|(_, label)| label.to_string())
-                    .unwrap_or_else(|| name.to_string())
-            })
-            .unwrap_or_else(|| "None".to_string()),
-        server_default_time_format: match state.time_format {
-            crate::state::TimeFormat::Twelve => "12-hour".to_string(),
-            crate::state::TimeFormat::TwentyFour => "24-hour".to_string(),
-        },
+        timezones: display_tz_options(&user.prefs.timezone),
+        holiday_regions: holiday_region_options(&user.prefs.holidays_region),
+        time_formats: time_format_options(&user.prefs.time_format),
+        server_default_timezone,
+        server_default_holidays,
+        server_default_time_format,
         saved: false,
-        has_override,
         jmap_server_url: jmap.server_url,
         jmap_username: jmap.username,
         jmap_password: jmap.password,

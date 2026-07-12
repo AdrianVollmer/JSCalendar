@@ -45,13 +45,13 @@ Environment variables:
 | `PORT`              | `8787`                            | HTTP port to listen on                                               |
 | `JSCAL_TIMEZONE`    | `UTC`                             | IANA zone views are rendered in (e.g. `Europe/Berlin`)               |
 | `JSCAL_STATIC_DIR`  | `crates/server/static`            | Where to serve `/static/*` and `/sw.js` from                         |
-| `JSCAL_DATA_DIR`    | `./data`                          | Where `users.json` (accounts + sessions) is stored (see "User management" below) |
+| `JSCAL_DATA_DIR`    | `./data`                          | Where `jscalendar.db` (SQLite: accounts, sessions, ICS subscriptions) is stored (see "User management" below) |
 | `JSCAL_ADMIN_PASSWORD`, `JSCAL_ADMIN_PASSWORD_FILE` | unset        | Sets/resets the built-in `admin` account's password on every startup; `_FILE` reads it from a mounted file instead (see below) |
 | `JSCAL_DEMO_SERVER_URL` | unset                         | If set, seeds the built-in admin's calendar connection on first startup (see below) |
 | `JSCAL_DEMO_USERNAME`   | `demo`                        | Seed JMAP username, only used when `JSCAL_DEMO_SERVER_URL` is set   |
 | `JSCAL_DEMO_PASSWORD`   | `demo`                        | Seed JMAP password, only used when `JSCAL_DEMO_SERVER_URL` is set   |
 | `JSCAL_HOLIDAYS_REGION` | unset                         | German federal state to show a "Public Holidays" pseudo-calendar for (see below); unset means the feature doesn't appear at all |
-| `JSCAL_TIME_FORMAT` | `12h`                             | Clock style for event/hour times: `12h` or `24h`. Both of these are also overridable per-browser from the in-app Settings page |
+| `JSCAL_TIME_FORMAT` | `12h`                             | Clock style for event/hour times: `12h` or `24h`. Both of these are also overridable per-account from the in-app Settings page |
 
 ## User management
 
@@ -63,12 +63,16 @@ account's own Settings page, plus its own app password, hashed with
 [argon2](https://crates.io/crates/argon2) and never stored in recoverable
 form.
 
-Accounts and sessions persist to `JSCAL_DATA_DIR/users.json` (mode `0600`)
-so they survive a restart, and a signed-in session lasts effectively
-forever (a ten-year cookie) until you explicitly sign out or an admin
-deletes the account. This is a deliberate departure from the rest of the
-app's "nothing persists to disk" design: real user accounts need to still
-exist tomorrow for "an admin creates accounts" to mean anything.
+Accounts, sessions, ICS subscriptions, and each account's display
+preferences (timezone/time format/holidays region — set from the Settings
+page, and applying across every browser and device you sign into, unlike
+a plain browser cookie) persist to a SQLite database at
+`JSCAL_DATA_DIR/jscalendar.db` (mode `0600`), so they survive a restart. A
+signed-in session lasts effectively forever (a ten-year cookie) until you
+explicitly sign out or an admin deletes the account. This is a deliberate
+departure from this app's original "nothing persists to disk" design:
+real user accounts need to still exist tomorrow for "an admin creates
+accounts" to mean anything.
 
 A built-in `admin` account is created automatically on first startup, with
 a random password logged once (grep the startup log for `created 'admin'`)
@@ -186,14 +190,18 @@ it manually instead.
   `anniversaries`) as a recurring, non-editable all-day item across
   month/week/day/agenda views, with the contact's age shown when their
   birth year is known. Both are hidden automatically if the JMAP server
-  doesn't advertise Contacts support.
+  doesn't advertise Contacts support. An "Import" button on the Contacts
+  view accepts a `.vcf` (vCard) file exported from another address book
+  and bulk-creates a contact per entry (name, one email, birthday — the
+  same fields the regular contact form supports), reporting how many were
+  imported; up to 500 contacts per file.
 - Subscribed iCal-URL calendars: a "Subscriptions" section in the sidebar
   (separate from the real "Calendars" section) lets you add any public
   `.ics` URL as a read-only overlay calendar, with its own name/color and
   the same visibility toggle as everything else. These aren't JMAP
-  calendars, so subscriptions live only in memory for the running server
-  process (lost on restart, unlike accounts and sessions, which persist to
-  disk). Each feed is fetched and parsed on demand and
+  calendars — they're stored in the app's own database rather than on the
+  JMAP server — but persist across restarts the same as accounts and
+  sessions. Each feed is fetched and parsed on demand and
   cached for `ICS_CACHE_TTL_SECS` (30 minutes) before being re-fetched, and
   a small ⚠ badge appears next to a subscription if its last fetch failed.
   The parser (`server/src/ics.rs`) covers `SUMMARY`/`DTSTART`/`DTEND`/
@@ -210,15 +218,11 @@ it manually instead.
   from the sidebar the first time you want it.
 - Settings page (`/app/settings`, linked from the sidebar footer): lets a
   user override the server's `JSCAL_TIMEZONE`, `JSCAL_HOLIDAYS_REGION`, and
-  a new `JSCAL_TIME_FORMAT` (12-hour vs. 24-hour clock) for their own
-  browser, without touching the server's environment. Saving sets a
-  long-lived cookie (separate from the login session cookie, so it
-  survives signing out and back in) that the server actually reads on every
-  render, which is what makes the override apply with JavaScript disabled
-  instead of just being a client-side re-skin. A small script also mirrors
-  the saved values into `localStorage`, so they can restore the form if the
-  cookie is ever cleared independently; the cookie remains the source of
-  truth for what's actually rendered.
+  `JSCAL_TIME_FORMAT` (12-hour vs. 24-hour clock) for their own account,
+  without touching the server's environment. Saved to the database (not a
+  browser cookie or `localStorage`), so preferences follow the account to
+  any browser or device it signs into, and the server reads them on every
+  render — no JavaScript required for the override to apply.
 - User management (see "User management" above): `admin`/`user` roles, an
   admin UI to create/edit/delete accounts, a built-in bootstrap admin
   account, and per-account JMAP connection settings configured from the
@@ -245,11 +249,10 @@ it manually instead.
   time zone; you still have to pick it yourself once.
 - Participants/attendees, alerts, and sharing (`Calendar/set` `shareWith`)
   are modeled in `jmap-client` but not surfaced in the UI yet.
-- ICS-subscription URLs aren't persisted to disk (see above), and the ICS
-  parser ignores `VTIMEZONE` blocks: a `DTSTART` with a `TZID` parameter
-  but no trailing `Z` is treated as floating rather than resolved against
-  the named zone. `VALARM`, `ATTENDEE`, and per-instance `RECURRENCE-ID`
-  overrides in a feed are ignored entirely.
+- The ICS parser ignores `VTIMEZONE` blocks: a `DTSTART` with a `TZID`
+  parameter but no trailing `Z` is treated as floating rather than
+  resolved against the named zone. `VALARM`, `ATTENDEE`, and per-instance
+  `RECURRENCE-ID` overrides in a feed are ignored entirely.
 - The built-in public-holidays pseudo-calendar only covers Germany (via
   `holiday_de`, one `GermanRegion` per deployment). There's no well-maintained
   Rust equivalent of Python's `holidays` package to draw on for other

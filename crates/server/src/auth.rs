@@ -209,6 +209,7 @@ pub struct AppUser {
     pub user_id: String,
     pub username: String,
     pub role: Role,
+    pub prefs: crate::users::DisplayPrefs,
 }
 
 impl<S> FromRequestParts<S> for AppUser
@@ -227,6 +228,7 @@ where
                     user_id: user.id,
                     username: user.username,
                     role: user.role,
+                    prefs: user.prefs,
                 });
             }
         }
@@ -243,8 +245,10 @@ pub struct AuthedSession {
     pub client: Client,
     pub account_id: String,
     pub contacts_account_id: Option<String>,
+    pub user_id: String,
     pub app_username: String,
     pub role: Role,
+    pub prefs: crate::users::DisplayPrefs,
 }
 
 impl<S> FromRequestParts<S> for AuthedSession
@@ -261,14 +265,17 @@ where
             .users
             .get_user(&app_user.user_id)
             .ok_or_else(|| redirect_to_login(&parts.headers))?;
+        let prefs = user.prefs.clone();
 
         match get_or_create_jmap_client(&app_state, &user).await {
             Ok(session) => Ok(AuthedSession {
                 client: session.client,
                 account_id: session.account_id,
                 contacts_account_id: session.contacts_account_id,
+                user_id: app_user.user_id,
                 app_username: app_user.username,
                 role: app_user.role,
+                prefs,
             }),
             Err(e) => {
                 tracing::warn!(

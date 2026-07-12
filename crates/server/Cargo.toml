@@ -10,7 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 jmap-client = { path = "../jmap-client" }
-axum = { version = "0.8", features = ["macros"] }
+axum = { version = "0.8", features = ["macros", "multipart"] }
 axum-extra = { version = "0.10", features = ["cookie"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 tower-http = { version = "0.6", features = ["fs", "trace", "compression-gzip"] }
@@ -30,3 +30,6 @@ holiday_de = "0.1"
 time = "0.3"
 argon2 = "0.5"
 rand_core = { version = "0.6", features = ["getrandom"] }
+# Pinned below the latest: newer libsqlite3-sys build scripts require an
+# unstable compiler feature (cfg_select) that this toolchain rejects.
+rusqlite = { version = "0.31", features = ["bundled"] }

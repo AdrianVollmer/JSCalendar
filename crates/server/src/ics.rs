@@ -67,7 +67,7 @@ pub fn parse_events(ics_text: &str, subscription_id: &str) -> Vec<CalendarEvent>
     events
 }
 
-type Params = Vec<(String, String)>;
+pub(crate) type Params = Vec<(String, String)>;
 
 #[derive(Default)]
 struct RawEvent {
@@ -282,7 +282,7 @@ fn parse_byday(item: &str) -> Option<NDay> {
     })
 }
 
-fn unescape_text(s: &str) -> String {
+pub(crate) fn unescape_text(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars();
     while let Some(c) = chars.next() {
@@ -302,7 +302,7 @@ fn unescape_text(s: &str) -> String {
 /// Un-folds RFC 5545 line continuations (a line starting with a single
 /// space or tab is a continuation of the previous line) and normalizes
 /// line endings.
-fn unfold(text: &str) -> Vec<String> {
+pub(crate) fn unfold(text: &str) -> Vec<String> {
     let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
     let mut lines: Vec<String> = Vec::new();
     for raw_line in normalized.split('\n') {
@@ -319,7 +319,7 @@ fn unfold(text: &str) -> Vec<String> {
 
 /// Splits a content line into `(NAME, params, VALUE)`, e.g.
 /// `DTSTART;VALUE=DATE:20260101` -> `("DTSTART", [("VALUE","DATE")], "20260101")`.
-fn parse_line(line: &str) -> Option<(String, Params, String)> {
+pub(crate) fn parse_line(line: &str) -> Option<(String, Params, String)> {
     let mut in_quotes = false;
     let mut colon_idx = None;
     for (i, c) in line.char_indices() {

@@ -5,11 +5,11 @@ mod csrf;
 mod error;
 mod ics;
 mod netguard;
-mod prefs;
 mod routes;
 mod security_headers;
 mod state;
 mod users;
+mod vcard;
 mod view;
 mod webutil;
 
@@ -54,6 +54,10 @@ async fn main() {
         )
         .route("/app/contact/new", get(routes::contact_new_form))
         .route("/app/contact", post(routes::contact_create))
+        .route(
+            "/app/contact/import",
+            get(routes::contact_import_form).post(routes::contact_import),
+        )
         .route(
             "/app/contact/{id}/edit",
             get(routes::contact_edit_form).post(routes::contact_update),

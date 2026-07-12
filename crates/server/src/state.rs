@@ -49,18 +49,6 @@ pub struct CachedContacts {
     pub fetched_at: Instant,
 }
 
-/// A subscribed read-only calendar sourced from an external `.ics` URL.
-/// Not a real JMAP calendar — there's no upstream server to store this on,
-/// so (unlike user accounts, which now do persist) the subscription list
-/// lives only in memory and is lost on restart.
-#[derive(Debug, Clone)]
-pub struct IcsSubscription {
-    pub id: String,
-    pub name: String,
-    pub color: String,
-    pub url: String,
-}
-
 /// How long a fetched-and-parsed `.ics` feed is trusted before re-fetching
 /// — the "regularly update by fetching" refresh, done lazily on read rather
 /// than via a background scheduler (same lazy-TTL shape as the contacts
@@ -131,13 +119,6 @@ pub enum TimeFormat {
 }
 
 impl TimeFormat {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            TimeFormat::Twelve => "12h",
-            TimeFormat::TwentyFour => "24h",
-        }
-    }
-
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "12h" => Some(TimeFormat::Twelve),
@@ -145,6 +126,32 @@ impl TimeFormat {
             _ => None,
         }
     }
+}
+
+/// Overrides `viewer_tz`/`holidays_region`/`time_format` with an account's
+/// stored `DisplayPrefs`, falling back to the server-wide defaults already
+/// on `state` field-by-field wherever a preference is unset (`""`) or
+/// doesn't parse. Cheap: `AppState`'s fields are all `Arc`/`Copy`, so this
+/// is just a shallow clone with a few fields swapped.
+pub fn apply_display_prefs(mut state: AppState, prefs: &crate::users::DisplayPrefs) -> AppState {
+    if !prefs.timezone.is_empty() {
+        if let Some(tz) = jmap_client::tz::parse_tz(&prefs.timezone) {
+            state.viewer_tz = tz;
+        }
+    }
+    if !prefs.holidays_region.is_empty() {
+        state.holidays_region = if prefs.holidays_region == "none" {
+            None
+        } else {
+            parse_german_region(&prefs.holidays_region)
+        };
+    }
+    if !prefs.time_format.is_empty() {
+        if let Some(tf) = TimeFormat::parse(&prefs.time_format) {
+            state.time_format = tf;
+        }
+    }
+    state
 }
 
 /// Pre-fills the login form's username/password when `JSCAL_ADMIN_PASSWORD`
@@ -159,9 +166,9 @@ pub struct DemoLogin {
 
 /// Shared server state. User accounts and sessions persist to disk (see
 /// `crate::users`); everything else here (JMAP data caches, ICS
-/// subscriptions) stays in-memory and is lost on restart, since it's
-/// either cheap to re-fetch from the JMAP server or, for ICS subscriptions,
-/// already documented as ephemeral.
+/// subscriptions, contacts) stays in-memory and is lost on restart, since
+/// it's either cheap to re-fetch from the JMAP server or, for the ICS
+/// fetch cache below, trivially re-derived from the subscription list.
 #[derive(Clone)]
 pub struct AppState {
     pub users: Arc<UserStore>,
@@ -179,8 +186,6 @@ pub struct AppState {
     /// only unique within one JMAP server) so two different accounts never
     /// collide even if their ids happen to match.
     pub contacts_cache: Arc<DashMap<String, CachedContacts>>,
-    /// Subscribed iCal-URL calendars, keyed the same way as `contacts_cache`.
-    pub ics_subscriptions: Arc<DashMap<String, Vec<IcsSubscription>>>,
     /// Parsed events from each subscription's last successful fetch, keyed
     /// by subscription id (globally unique, no account-key prefix needed).
     pub ics_cache: Arc<DashMap<String, CachedIcsEvents>>,
@@ -218,7 +223,9 @@ impl AppState {
             .unwrap_or_default();
 
         let data_dir = std::env::var("JSCAL_DATA_DIR").unwrap_or_else(|_| "./data".to_string());
-        let users = Arc::new(UserStore::load(PathBuf::from(data_dir).join("users.json")));
+        let users = Arc::new(UserStore::open(
+            PathBuf::from(data_dir).join("jscalendar.db"),
+        ));
         crate::users::ensure_bootstrap_admin(&users);
         let demo_login = read_secret("JSCAL_ADMIN_PASSWORD").map(|password| DemoLogin {
             username: crate::users::BOOTSTRAP_ADMIN_USERNAME.to_string(),
@@ -231,7 +238,6 @@ impl AppState {
             viewer_tz,
             demo_login,
             contacts_cache: Arc::new(DashMap::new()),
-            ics_subscriptions: Arc::new(DashMap::new()),
             ics_cache: Arc::new(DashMap::new()),
             // No redirects: this client only ever fetches user-supplied
             // ICS-subscription URLs (see `crate::netguard`), and a

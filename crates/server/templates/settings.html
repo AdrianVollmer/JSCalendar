@@ -2,12 +2,12 @@
 {% block title %}Settings – JSCalendar{% endblock %}
 {% block body %}
 <main class="login-page">
-  <form class="login-card settings-card" method="post" action="/app/settings" id="settings-form" data-has-override="{{ has_override }}">
+  <form class="login-card settings-card" method="post" action="/app/settings" id="settings-form">
     <div class="login-brand">
       <img src="/static/icons/icon.svg" alt="" width="40" height="40">
       <h1>Settings</h1>
     </div>
-    <p class="login-sub">These are saved for this browser and override the server's defaults.</p>
+    <p class="login-sub">Saved to your account, so they follow you across browsers and devices.</p>
 
     {% if saved %}
     <p class="settings-saved" role="status">Saved.</p>
@@ -83,5 +83,4 @@
     </div>
   </form>
 </main>
-<script src="{{ crate::assets::settings_js_url() }}" defer></script>
 {% endblock %}

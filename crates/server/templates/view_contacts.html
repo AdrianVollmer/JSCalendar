@@ -7,6 +7,7 @@
         hx-get="/app" hx-include="closest form" hx-target="#view" hx-swap="innerHTML" hx-push-url="true"
         hx-trigger="keyup changed delay:300ms, search" hx-preserve="true" autocomplete="off">
     </form>
+    <a class="btn btn-ghost" href="/app/contact/import?view=contacts&amp;cal={{ cal_param }}" hx-get="/app/contact/import?view=contacts&amp;cal={{ cal_param }}" hx-target="#modal-root" hx-swap="innerHTML">Import</a>
   </div>
 
   {% if contacts.is_empty() %}

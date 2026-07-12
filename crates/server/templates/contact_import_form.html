@@ -1,0 +1,52 @@
+<div class="modal-backdrop" id="event-dialog-backdrop">
+<dialog class="event-dialog" open aria-label="Import contacts">
+  {% if let Some(result) = result %}
+  <header class="event-form-header">
+    <h2>Import contacts</h2>
+    <a class="btn-icon" href="/app?view=contacts&amp;date={{ back_date }}&amp;cal={{ back_cal }}" aria-label="Close">✕</a>
+  </header>
+  <div class="event-form">
+    <p>
+      Imported {{ result.imported }} contact{% if result.imported != 1 %}s{% endif %}{% if result.skipped > 0 %},
+      skipped {{ result.skipped }}{% endif %}.
+    </p>
+    <footer class="event-form-footer">
+      <span class="spacer"></span>
+      <a class="btn btn-primary" href="/app?view=contacts&amp;date={{ back_date }}&amp;cal={{ back_cal }}" hx-get="/app?view=contacts&amp;date={{ back_date }}&amp;cal={{ back_cal }}" hx-target="#app-root" hx-push-url="true" hx-swap="outerHTML">Done</a>
+    </footer>
+  </div>
+  {% else %}
+  <form class="event-form"
+    method="post"
+    action="/app/contact/import"
+    enctype="multipart/form-data"
+    hx-post="/app/contact/import"
+    hx-target="#modal-root" hx-swap="innerHTML">
+
+    <header class="event-form-header">
+      <h2>Import contacts</h2>
+      <a class="btn-icon" href="/app?view=contacts&amp;date={{ back_date }}&amp;cal={{ back_cal }}" aria-label="Close">✕</a>
+    </header>
+
+    {% if let Some(err) = error %}
+    <p class="form-error" role="alert">{{ err }}</p>
+    {% endif %}
+
+    <input type="hidden" name="back_date" value="{{ back_date }}">
+    <input type="hidden" name="back_cal" value="{{ back_cal }}">
+
+    <label class="field">
+      <span>vCard file</span>
+      <input type="file" name="file" accept=".vcf,text/vcard" required autofocus>
+    </label>
+    <p class="field-hint">A <code>.vcf</code> export from another address book. Each contact's name, one email address, and birthday are imported.</p>
+
+    <footer class="event-form-footer">
+      <span class="spacer"></span>
+      <a class="btn btn-ghost" href="/app?view=contacts&amp;date={{ back_date }}&amp;cal={{ back_cal }}">Cancel</a>
+      <button type="submit" class="btn btn-primary">Import</button>
+    </footer>
+  </form>
+  {% endif %}
+</dialog>
+</div>
