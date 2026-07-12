@@ -216,18 +216,24 @@ it manually instead.
   opt-in per deployment (unset by default, so no region is silently assumed)
   and, unlike Birthdays, starts hidden even when configured; toggle it on
   from the sidebar the first time you want it.
-- Settings page (`/app/settings`, linked from the sidebar footer): lets a
-  user override the server's `JSCAL_TIMEZONE`, `JSCAL_HOLIDAYS_REGION`, and
-  `JSCAL_TIME_FORMAT` (12-hour vs. 24-hour clock) for their own account,
-  without touching the server's environment. Saved to the database (not a
+- Settings (`/app/settings`, linked from the sidebar footer): a
+  GitHub-settings-style layout — the calendar sidebar stays visible, and a
+  secondary nav on the left switches between three sections, each its own
+  page/form instead of one long scroll: **Preferences** (override the
+  server's `JSCAL_TIMEZONE`, `JSCAL_HOLIDAYS_REGION`, and
+  `JSCAL_TIME_FORMAT` for just this account), **Calendar connection** (the
+  JMAP server/credentials), and **Password**. Saved to the database (not a
   browser cookie or `localStorage`), so preferences follow the account to
   any browser or device it signs into, and the server reads them on every
-  render — no JavaScript required for the override to apply.
-- User management (see "User management" above): `admin`/`user` roles, an
-  admin UI to create/edit/delete accounts, a built-in bootstrap admin
-  account, and per-account JMAP connection settings configured from the
-  Settings page instead of typed in at login. Accounts and sessions persist
-  to disk; a signed-in session lasts until explicit sign-out.
+  render — no JavaScript required for the override to apply. A brand-new
+  account with no calendar server configured yet can still reach every
+  section (the sidebar's calendar list just stays empty until one is set).
+- User management (see "User management" above): `admin`/`user` roles, and
+  an admin UI (`/admin/users`, added as a "Users" section alongside
+  Settings for admins) to create/edit/delete accounts, a built-in bootstrap
+  admin account, and per-account JMAP connection settings configured from
+  Settings instead of typed in at login. Accounts and sessions persist to
+  disk; a signed-in session lasts until explicit sign-out.
 
 ## Known limitations
 

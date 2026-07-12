@@ -6,9 +6,9 @@ use axum::Form;
 use serde::Deserialize;
 
 use crate::auth::AdminUser;
+use crate::routes::account_page;
 use crate::state::AppState;
 use crate::users::Role;
-use crate::webutil::render;
 
 struct UserRow {
     id: String,
@@ -38,7 +38,10 @@ pub async fn list_users(State(state): State<AppState>, admin: AdminUser) -> Resp
         })
         .collect();
     users.sort_by(|a, b| a.username.to_lowercase().cmp(&b.username.to_lowercase()));
-    render(&AdminUsersTemplate { users }).into_response()
+    let body = AdminUsersTemplate { users }
+        .render()
+        .unwrap_or_else(|e| format!("template error: {e}"));
+    account_page(&state, &admin.0, "users", "Users", body).await
 }
 
 #[derive(Template)]
@@ -51,33 +54,37 @@ struct AdminUserFormTemplate {
     error: Option<String>,
 }
 
-pub async fn new_user_form(_admin: AdminUser) -> Response {
-    render(&AdminUserFormTemplate {
+pub async fn new_user_form(State(state): State<AppState>, admin: AdminUser) -> Response {
+    let body = AdminUserFormTemplate {
         editing: false,
         user_id: String::new(),
         username: String::new(),
         role: Role::User.as_str(),
         error: None,
-    })
-    .into_response()
+    }
+    .render()
+    .unwrap_or_else(|e| format!("template error: {e}"));
+    account_page(&state, &admin.0, "users", "New user", body).await
 }
 
 pub async fn edit_user_form(
     State(state): State<AppState>,
-    _admin: AdminUser,
+    admin: AdminUser,
     Path(id): Path<String>,
 ) -> Response {
     let Some(user) = state.users.get_user(&id) else {
         return (axum::http::StatusCode::NOT_FOUND, "user not found").into_response();
     };
-    render(&AdminUserFormTemplate {
+    let body = AdminUserFormTemplate {
         editing: true,
         user_id: user.id,
         username: user.username,
         role: user.role.as_str(),
         error: None,
-    })
-    .into_response()
+    }
+    .render()
+    .unwrap_or_else(|e| format!("template error: {e}"));
+    account_page(&state, &admin.0, "users", "Edit user", body).await
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -90,38 +97,70 @@ pub struct AdminUserFormBody {
     pub role: String,
 }
 
-fn form_error(editing: bool, user_id: &str, username: &str, role: &str, msg: &str) -> Response {
-    render(&AdminUserFormTemplate {
+async fn form_error(
+    state: &AppState,
+    admin: &crate::auth::AppUser,
+    editing: bool,
+    user_id: &str,
+    username: &str,
+    role: &str,
+    msg: &str,
+) -> Response {
+    let body = AdminUserFormTemplate {
         editing,
         user_id: user_id.to_string(),
         username: username.to_string(),
         role: if role == "admin" { "admin" } else { "user" },
         error: Some(msg.to_string()),
-    })
-    .into_response()
+    }
+    .render()
+    .unwrap_or_else(|e| format!("template error: {e}"));
+    let title = if editing { "Edit user" } else { "New user" };
+    account_page(state, admin, "users", title, body).await
 }
 
 pub async fn create_user(
     State(state): State<AppState>,
-    _admin: AdminUser,
+    admin: AdminUser,
     headers: HeaderMap,
     Form(form): Form<AdminUserFormBody>,
 ) -> Response {
     let username = form.username.trim().to_string();
     if username.is_empty() {
-        return form_error(false, "", &username, &form.role, "Username is required.");
+        return form_error(
+            &state,
+            &admin.0,
+            false,
+            "",
+            &username,
+            &form.role,
+            "Username is required.",
+        )
+        .await;
     }
     if form.password.len() < 8 {
         return form_error(
+            &state,
+            &admin.0,
             false,
             "",
             &username,
             &form.role,
             "Password must be at least 8 characters.",
-        );
+        )
+        .await;
     }
     if state.users.username_taken(&username, None) {
-        return form_error(false, "", &username, &form.role, "That username is taken.");
+        return form_error(
+            &state,
+            &admin.0,
+            false,
+            "",
+            &username,
+            &form.role,
+            "That username is taken.",
+        )
+        .await;
     }
     let hash = crate::users::hash_password(&form.password);
     state.users.create_user(
@@ -145,38 +184,65 @@ pub async fn update_user(
     };
     let username = form.username.trim().to_string();
     if username.is_empty() {
-        return form_error(true, &id, &username, &form.role, "Username is required.");
+        return form_error(
+            &state,
+            &admin.0,
+            true,
+            &id,
+            &username,
+            &form.role,
+            "Username is required.",
+        )
+        .await;
     }
     if state.users.username_taken(&username, Some(&id)) {
-        return form_error(true, &id, &username, &form.role, "That username is taken.");
+        return form_error(
+            &state,
+            &admin.0,
+            true,
+            &id,
+            &username,
+            &form.role,
+            "That username is taken.",
+        )
+        .await;
     }
     let new_role = Role::parse(&form.role);
     if existing.role == Role::Admin && new_role == Role::User && id == admin.0.user_id {
         return form_error(
+            &state,
+            &admin.0,
             true,
             &id,
             &username,
             &form.role,
             "You can't demote yourself.",
-        );
+        )
+        .await;
     }
     if existing.role == Role::Admin && new_role == Role::User && state.users.admin_count() <= 1 {
         return form_error(
+            &state,
+            &admin.0,
             true,
             &id,
             &username,
             &form.role,
             "There must be at least one admin.",
-        );
+        )
+        .await;
     }
     if !form.password.is_empty() && form.password.len() < 8 {
         return form_error(
+            &state,
+            &admin.0,
             true,
             &id,
             &username,
             &form.role,
             "Password must be at least 8 characters.",
-        );
+        )
+        .await;
     }
 
     let new_hash = if form.password.is_empty() {

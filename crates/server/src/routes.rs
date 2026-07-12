@@ -752,6 +752,136 @@ async fn build_shell_parts(
     })
 }
 
+/// Read-only variant of `sidebar_calendars` for the settings/admin pages:
+/// no toggle/edit state is meaningful there, so every row just links back
+/// to the calendar view.
+fn account_sidebar_calendars(
+    calendars: &[Calendar],
+    has_contacts: bool,
+    has_holidays: bool,
+) -> Vec<SidebarCalendarVM> {
+    let mut items: Vec<SidebarCalendarVM> = calendars
+        .iter()
+        .filter_map(|c| {
+            let id = c.id.clone()?;
+            Some(SidebarCalendarVM {
+                color: view::calendar_color(Some(c), &id),
+                visible: true,
+                toggle_href: "/app".to_string(),
+                edit_href: None,
+                name: c.name.clone(),
+                error: None,
+                id,
+            })
+        })
+        .collect();
+    items.sort_by(|a, b| a.name.cmp(&b.name));
+    if has_contacts {
+        items.push(SidebarCalendarVM {
+            id: view::BIRTHDAY_PSEUDO_ID.to_string(),
+            name: "Birthdays".to_string(),
+            color: view::BIRTHDAY_COLOR.to_string(),
+            visible: true,
+            toggle_href: "/app".to_string(),
+            edit_href: None,
+            error: None,
+        });
+    }
+    if has_holidays {
+        items.push(SidebarCalendarVM {
+            id: view::HOLIDAYS_PSEUDO_ID.to_string(),
+            name: "Public Holidays".to_string(),
+            color: view::HOLIDAYS_COLOR.to_string(),
+            visible: true,
+            toggle_href: "/app".to_string(),
+            edit_href: None,
+            error: None,
+        });
+    }
+    items
+}
+
+/// Read-only variant of `sidebar_ics_subscriptions` for the settings/admin
+/// pages — see `account_sidebar_calendars`.
+fn account_sidebar_ics(subs: &[crate::users::IcsSubscription]) -> Vec<SidebarCalendarVM> {
+    let mut items: Vec<SidebarCalendarVM> = subs
+        .iter()
+        .map(|s| SidebarCalendarVM {
+            id: crate::ics::pseudo_calendar_id(&s.id),
+            visible: true,
+            toggle_href: "/app".to_string(),
+            edit_href: None,
+            color: s.color.clone(),
+            name: s.name.clone(),
+            error: None,
+        })
+        .collect();
+    items.sort_by(|a, b| a.name.cmp(&b.name));
+    items
+}
+
+#[derive(Template)]
+#[template(path = "account_shell.html")]
+struct AccountShellTemplate {
+    title: String,
+    username: String,
+    is_admin: bool,
+    has_calendar_session: bool,
+    calendars: Vec<SidebarCalendarVM>,
+    ics_subscriptions: Vec<SidebarCalendarVM>,
+    active_section: &'static str,
+    body: String,
+}
+
+/// Shared page shell for the settings and admin sections: keeps the app's
+/// calendar sidebar (read-only here — see `account_sidebar_calendars`) so
+/// navigation stays consistent, and lays the given section `body` out next
+/// to a secondary nav of settings/admin sections, GitHub-settings-style.
+///
+/// Uses a best-effort JMAP connection (`try_full_session`) rather than
+/// requiring one, since a brand-new user must be able to reach Settings to
+/// configure their calendar server in the first place — the sidebar's
+/// calendar list just stays empty until they do.
+pub(crate) async fn account_page(
+    state: &AppState,
+    app_user: &AppUser,
+    active_section: &'static str,
+    title: &str,
+    body: String,
+) -> Response {
+    let full_session = crate::auth::try_full_session(state, app_user).await;
+    let (has_calendar_session, calendars, ics_subscriptions) = match &full_session {
+        Some(session) => {
+            let has_contacts = session.contacts_account_id.is_some();
+            let calendars = session
+                .client
+                .get_calendars(&session.account_id)
+                .await
+                .unwrap_or_default();
+            (
+                true,
+                account_sidebar_calendars(
+                    &calendars,
+                    has_contacts,
+                    state.holidays_region.is_some(),
+                ),
+                account_sidebar_ics(&ics_subscriptions_for(state, session)),
+            )
+        }
+        None => (false, Vec::new(), Vec::new()),
+    };
+    render(&AccountShellTemplate {
+        title: title.to_string(),
+        username: app_user.username.clone(),
+        is_admin: app_user.role == crate::users::Role::Admin,
+        has_calendar_session,
+        calendars,
+        ics_subscriptions,
+        active_section,
+        body,
+    })
+}
+
 pub async fn root() -> Redirect {
     Redirect::to("/app")
 }
@@ -2947,9 +3077,14 @@ fn time_format_options(selected: &str) -> Vec<SelectOption> {
     ]
 }
 
+fn render_section<T: Template>(tpl: &T) -> String {
+    tpl.render()
+        .unwrap_or_else(|e| format!("template error: {e}"))
+}
+
 #[derive(Template)]
-#[template(path = "settings.html")]
-struct SettingsTemplate {
+#[template(path = "settings_preferences.html")]
+struct SettingsPreferencesTemplate {
     timezones: Vec<TzOption>,
     holiday_regions: Vec<SelectOption>,
     time_formats: Vec<SelectOption>,
@@ -2957,10 +3092,22 @@ struct SettingsTemplate {
     server_default_holidays: String,
     server_default_time_format: String,
     saved: bool,
+}
+
+#[derive(Template)]
+#[template(path = "settings_connection.html")]
+struct SettingsConnectionTemplate {
+    saved: bool,
     jmap_server_url: String,
     jmap_username: String,
     jmap_password: String,
     jmap_token: String,
+}
+
+#[derive(Template)]
+#[template(path = "settings_password.html")]
+struct SettingsPasswordTemplate {
+    saved: bool,
     password_error: Option<String>,
 }
 
@@ -2994,14 +3141,9 @@ pub async fn settings_form(
     user: AppUser,
     Query(q): Query<SettingsQuery>,
 ) -> Response {
-    let jmap = state
-        .users
-        .get_user(&user.user_id)
-        .map(|u| u.jmap)
-        .unwrap_or_default();
     let (server_default_timezone, server_default_holidays, server_default_time_format) =
         server_default_labels(&state);
-    render(&SettingsTemplate {
+    let body = render_section(&SettingsPreferencesTemplate {
         timezones: display_tz_options(&user.prefs.timezone),
         holiday_regions: holiday_region_options(&user.prefs.holidays_region),
         time_formats: time_format_options(&user.prefs.time_format),
@@ -3009,23 +3151,57 @@ pub async fn settings_form(
         server_default_holidays,
         server_default_time_format,
         saved: q.saved,
-        jmap_server_url: jmap.server_url,
-        jmap_username: jmap.username,
-        jmap_password: jmap.password,
-        jmap_token: jmap.token,
-        password_error: None,
-    })
-    .into_response()
+    });
+    account_page(&state, &user, "preferences", "Preferences", body).await
 }
 
 #[derive(Debug, Deserialize, Default)]
-pub struct SettingsFormBody {
+pub struct PreferencesFormBody {
     #[serde(default)]
     pub timezone: String,
     #[serde(default)]
     pub holidays_region: String,
     #[serde(default)]
     pub time_format: String,
+}
+
+pub async fn settings_save(
+    State(state): State<AppState>,
+    user: AppUser,
+    headers: HeaderMap,
+    Form(form): Form<PreferencesFormBody>,
+) -> Response {
+    let prefs = crate::users::DisplayPrefs {
+        timezone: form.timezone,
+        time_format: form.time_format,
+        holidays_region: form.holidays_region,
+    };
+    state.users.update_user(&user.user_id, |u| u.prefs = prefs);
+    crate::webutil::redirect("/app/settings?saved=true", &headers)
+}
+
+pub async fn settings_connection_form(
+    State(state): State<AppState>,
+    user: AppUser,
+    Query(q): Query<SettingsQuery>,
+) -> Response {
+    let jmap = state
+        .users
+        .get_user(&user.user_id)
+        .map(|u| u.jmap)
+        .unwrap_or_default();
+    let body = render_section(&SettingsConnectionTemplate {
+        saved: q.saved,
+        jmap_server_url: jmap.server_url,
+        jmap_username: jmap.username,
+        jmap_password: jmap.password,
+        jmap_token: jmap.token,
+    });
+    account_page(&state, &user, "connection", "Calendar connection", body).await
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct ConnectionFormBody {
     #[serde(default)]
     pub jmap_server_url: String,
     #[serde(default)]
@@ -3034,72 +3210,65 @@ pub struct SettingsFormBody {
     pub jmap_password: String,
     #[serde(default)]
     pub jmap_token: String,
-    #[serde(default)]
-    pub new_password: String,
-    #[serde(default)]
-    pub new_password_confirm: String,
 }
 
-pub async fn settings_save(
+pub async fn settings_connection_save(
     State(state): State<AppState>,
     user: AppUser,
     headers: HeaderMap,
-    Form(form): Form<SettingsFormBody>,
+    Form(form): Form<ConnectionFormBody>,
 ) -> Response {
-    if !form.new_password.is_empty() || !form.new_password_confirm.is_empty() {
-        if form.new_password != form.new_password_confirm {
-            return password_change_error(&state, &user, "Passwords do not match.");
-        }
-        if form.new_password.len() < 8 {
-            return password_change_error(&state, &user, "Password must be at least 8 characters.");
-        }
-        let hash = crate::users::hash_password(&form.new_password);
-        state
-            .users
-            .update_user(&user.user_id, |u| u.password_hash = hash);
-    }
-
     let jmap = crate::users::JmapSettings {
         server_url: form.jmap_server_url.trim().to_string(),
         username: form.jmap_username.trim().to_string(),
         password: form.jmap_password,
         token: form.jmap_token.trim().to_string(),
     };
-    let prefs = crate::users::DisplayPrefs {
-        timezone: form.timezone.clone(),
-        time_format: form.time_format.clone(),
-        holidays_region: form.holidays_region.clone(),
-    };
-    state.users.update_user(&user.user_id, |u| {
-        u.jmap = jmap;
-        u.prefs = prefs;
-    });
+    state.users.update_user(&user.user_id, |u| u.jmap = jmap);
     state.jmap_clients.remove(&user.user_id);
-
-    crate::webutil::redirect("/app/settings?saved=true", &headers)
+    crate::webutil::redirect("/app/settings/connection?saved=true", &headers)
 }
 
-fn password_change_error(state: &AppState, user: &AppUser, msg: &str) -> Response {
-    let jmap = state
-        .users
-        .get_user(&user.user_id)
-        .map(|u| u.jmap)
-        .unwrap_or_default();
-    let (server_default_timezone, server_default_holidays, server_default_time_format) =
-        server_default_labels(state);
-    render(&SettingsTemplate {
-        timezones: display_tz_options(&user.prefs.timezone),
-        holiday_regions: holiday_region_options(&user.prefs.holidays_region),
-        time_formats: time_format_options(&user.prefs.time_format),
-        server_default_timezone,
-        server_default_holidays,
-        server_default_time_format,
+pub async fn settings_password_form(State(state): State<AppState>, user: AppUser) -> Response {
+    let body = render_section(&SettingsPasswordTemplate {
         saved: false,
-        jmap_server_url: jmap.server_url,
-        jmap_username: jmap.username,
-        jmap_password: jmap.password,
-        jmap_token: jmap.token,
+        password_error: None,
+    });
+    account_page(&state, &user, "password", "Password", body).await
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct PasswordFormBody {
+    #[serde(default)]
+    pub new_password: String,
+    #[serde(default)]
+    pub new_password_confirm: String,
+}
+
+pub async fn settings_password_save(
+    State(state): State<AppState>,
+    user: AppUser,
+    headers: HeaderMap,
+    Form(form): Form<PasswordFormBody>,
+) -> Response {
+    if form.new_password != form.new_password_confirm {
+        return password_change_error(&state, &user, "Passwords do not match.").await;
+    }
+    if form.new_password.len() < 8 {
+        return password_change_error(&state, &user, "Password must be at least 8 characters.")
+            .await;
+    }
+    let hash = crate::users::hash_password(&form.new_password);
+    state
+        .users
+        .update_user(&user.user_id, |u| u.password_hash = hash);
+    crate::webutil::redirect("/app/settings/password?saved=true", &headers)
+}
+
+async fn password_change_error(state: &AppState, user: &AppUser, msg: &str) -> Response {
+    let body = render_section(&SettingsPasswordTemplate {
+        saved: false,
         password_error: Some(msg.to_string()),
-    })
-    .into_response()
+    });
+    account_page(state, user, "password", "Password", body).await
 }

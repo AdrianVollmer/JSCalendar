@@ -117,14 +117,11 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .login-advanced { font-size: 0.85em; color: var(--text-muted); }
 .login-advanced summary { cursor: pointer; }
 .login-advanced .field { margin-top: 0.6rem; }
-.settings-card { max-width: 440px; }
-.settings-card .field > span small { font-weight: 400; opacity: 0.75; }
-.settings-actions { display: flex; align-items: center; justify-content: space-between; margin-top: 0.4rem; }
+.field > span small { font-weight: 400; opacity: 0.75; }
+.settings-actions { display: flex; align-items: center; justify-content: flex-end; gap: 0.6rem; margin-top: 0.4rem; }
 .settings-saved { color: var(--accent); font-size: 0.88em; margin: 0; background: color-mix(in srgb, var(--accent) 12%, transparent); padding: 0.5em 0.7em; border-radius: var(--radius-sm); }
-.settings-section-title { font-size: 0.95em; margin: 0.6rem 0 -0.4rem; padding-top: 0.8rem; border-top: 1px solid var(--border); }
 
 /* ---- admin: user list ---- */
-.admin-card { max-width: 480px; }
 .admin-user-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.4rem; }
 .admin-user-row {
   display: flex; align-items: center; justify-content: space-between; gap: 0.8em; padding: 0.6em 0.8em;
@@ -204,6 +201,17 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .sidebar-toggle-checkbox { display: none; }
 .sidebar-close, .menu-toggle, .fab-new { display: none; }
 .sidebar-backdrop { display: none; }
+
+/* ---- settings/admin: secondary nav + main column (GitHub-settings style) ---- */
+.settings-layout { display: flex; flex: 1; min-height: 0; overflow-y: auto; }
+.settings-nav { flex: 0 0 200px; padding: 1.6rem 1rem; border-right: 1px solid var(--border); display: flex; flex-direction: column; gap: 0.15rem; }
+.settings-nav-link { padding: 0.45em 0.7em; border-radius: var(--radius-sm); color: var(--text-muted); font-weight: 500; font-size: 0.92em; }
+.settings-nav-link:hover { background: var(--bg-sunken); color: var(--text); }
+.settings-nav-link.active { background: var(--today-bg); color: var(--accent); }
+.settings-nav-divider { height: 1px; background: var(--border); margin: 0.6rem 0.4rem; }
+.settings-main { flex: 1; min-width: 0; padding: 1.8rem 2rem; max-width: 620px; }
+.settings-main h1 { font-size: 1.25rem; margin: 0 0 1.3rem; }
+.settings-main form { display: flex; flex-direction: column; gap: 0.9rem; }
 
 /* ---- month view ---- */
 .month-view { display: flex; flex-direction: column; height: 100%; }
@@ -363,6 +371,10 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
     background: rgba(10, 12, 20, 0.45);
   }
   .sidebar-toggle-checkbox:checked ~ .app .sidebar-backdrop { display: block; }
+  .settings-layout { flex-direction: column; }
+  .settings-nav { flex-direction: row; flex-wrap: wrap; align-items: flex-start; border-right: none; border-bottom: 1px solid var(--border); padding: 0.8rem 1rem; }
+  .settings-nav-divider { display: none; }
+  .settings-main { padding: 1.2rem; max-width: none; }
   /* The sidebar's own "+ New event"/"+ New contact" button is off-canvas
      with the rest of the drawer, so mobile gets a floating twin of it
      (same href/label) that's always reachable without opening the menu. */

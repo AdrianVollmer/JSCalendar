@@ -1,0 +1,36 @@
+<h1>Preferences</h1>
+{% if saved %}
+<p class="settings-saved" role="status">Saved.</p>
+{% endif %}
+<form method="post" action="/app/settings">
+  <label class="field">
+    <span>Time zone <small>(server default: {{ server_default_timezone }})</small></span>
+    <select name="timezone">
+      {% for tz in timezones %}
+      <option value="{{ tz.value }}" {% if tz.selected %}selected{% endif %}>{{ tz.label }}</option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <label class="field">
+    <span>Time format <small>(server default: {{ server_default_time_format }})</small></span>
+    <select name="time_format">
+      {% for opt in time_formats %}
+      <option value="{{ opt.value }}" {% if opt.selected %}selected{% endif %}>{{ opt.label }}</option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <label class="field">
+    <span>Public holidays <small>(server default: {{ server_default_holidays }})</small></span>
+    <select name="holidays_region">
+      {% for opt in holiday_regions %}
+      <option value="{{ opt.value }}" {% if opt.selected %}selected{% endif %}>{{ opt.label }}</option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <div class="settings-actions">
+    <button type="submit" class="btn btn-primary">Save</button>
+  </div>
+</form>

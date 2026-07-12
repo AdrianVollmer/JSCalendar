@@ -1,39 +1,26 @@
-{% extends "base.html" %}
-{% block title %}Users – JSCalendar{% endblock %}
-{% block body %}
-<main class="login-page">
-  <div class="login-card settings-card admin-card">
-    <div class="login-brand">
-      <img src="/static/icons/icon.svg" alt="" width="40" height="40">
-      <h1>Users</h1>
+<h1>Users</h1>
+<ul class="admin-user-list">
+  {% for u in users %}
+  <li class="admin-user-row">
+    <div class="admin-user-main">
+      <span class="admin-user-name">{{ u.username }}{% if u.is_self %} <small>(you)</small>{% endif %}</span>
+      <span class="admin-user-meta">
+        <span class="role-badge role-{{ u.role_label }}">{{ u.role_label }}</span>
+        {% if !u.jmap_configured %}<span class="admin-user-warn" title="No calendar server configured yet">no calendar connected</span>{% endif %}
+      </span>
     </div>
+    <span class="admin-user-actions">
+      <a class="btn-link" href="/admin/users/{{ u.id }}/edit">Edit</a>
+      {% if !u.is_self %}
+      <form method="post" action="/admin/users/{{ u.id }}/delete" data-confirm="Delete {{ u.username }}?">
+        <button type="submit" class="btn-link">Delete</button>
+      </form>
+      {% endif %}
+    </span>
+  </li>
+  {% endfor %}
+</ul>
 
-    <ul class="admin-user-list">
-      {% for u in users %}
-      <li class="admin-user-row">
-        <div class="admin-user-main">
-          <span class="admin-user-name">{{ u.username }}{% if u.is_self %} <small>(you)</small>{% endif %}</span>
-          <span class="admin-user-meta">
-            <span class="role-badge role-{{ u.role_label }}">{{ u.role_label }}</span>
-            {% if !u.jmap_configured %}<span class="admin-user-warn" title="No calendar server configured yet">no calendar connected</span>{% endif %}
-          </span>
-        </div>
-        <span class="admin-user-actions">
-          <a class="btn-link" href="/admin/users/{{ u.id }}/edit">Edit</a>
-          {% if !u.is_self %}
-          <form method="post" action="/admin/users/{{ u.id }}/delete" data-confirm="Delete {{ u.username }}?">
-            <button type="submit" class="btn-link">Delete</button>
-          </form>
-          {% endif %}
-        </span>
-      </li>
-      {% endfor %}
-    </ul>
-
-    <div class="settings-actions">
-      <a class="btn btn-ghost" href="/app">Back to calendar</a>
-      <a class="btn btn-primary" href="/admin/users/new">New user</a>
-    </div>
-  </div>
-</main>
-{% endblock %}
+<div class="settings-actions">
+  <a class="btn btn-primary" href="/admin/users/new">New user</a>
+</div>

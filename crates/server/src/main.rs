@@ -100,6 +100,14 @@ async fn main() {
             get(routes::settings_form).post(routes::settings_save),
         )
         .route(
+            "/app/settings/connection",
+            get(routes::settings_connection_form).post(routes::settings_connection_save),
+        )
+        .route(
+            "/app/settings/password",
+            get(routes::settings_password_form).post(routes::settings_password_save),
+        )
+        .route(
             "/admin/users",
             get(admin::list_users).post(admin::create_user),
         )

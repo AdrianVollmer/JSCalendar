@@ -288,6 +288,24 @@ where
     }
 }
 
+/// Best-effort JMAP connection for a page that must render even when no
+/// calendar server is configured (or reachable) yet — unlike the
+/// `AuthedSession` extractor, failures are swallowed rather than redirected,
+/// so callers can fall back to a reduced UI instead of bouncing the user.
+pub async fn try_full_session(app_state: &AppState, app_user: &AppUser) -> Option<AuthedSession> {
+    let user = app_state.users.get_user(&app_user.user_id)?;
+    let session = get_or_create_jmap_client(app_state, &user).await.ok()?;
+    Some(AuthedSession {
+        client: session.client,
+        account_id: session.account_id,
+        contacts_account_id: session.contacts_account_id,
+        user_id: app_user.user_id.clone(),
+        app_username: app_user.username.clone(),
+        role: app_user.role,
+        prefs: user.prefs,
+    })
+}
+
 /// Extractor that requires the caller to be signed in as an admin, for
 /// gating `/admin/*` routes. Rejects with 403 (not a redirect) since a
 /// non-admin being shown the login page again would be misleading — they

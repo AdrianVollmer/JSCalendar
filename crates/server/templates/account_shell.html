@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} – JSCalendar{% endblock %}
+{% block body %}
+<input type="checkbox" id="sidebar-toggle" class="sidebar-toggle-checkbox">
+<div class="app" id="app-root">
+  <label for="sidebar-toggle" class="sidebar-backdrop" aria-hidden="true"></label>
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <img src="/static/icons/icon.svg" alt="" width="28" height="28">
+      <span>JSCalendar</span>
+      <label for="sidebar-toggle" class="btn btn-icon sidebar-close" aria-label="Close menu">✕</label>
+    </div>
+    <a class="btn btn-ghost btn-block" href="/app">← Back to calendar</a>
+
+    {% if has_calendar_session %}
+    <div class="sidebar-section">
+      <div class="sidebar-section-header">
+        <h2>Calendars</h2>
+      </div>
+      <ul class="calendar-list">
+        {% include "calendar_list.html" %}
+      </ul>
+    </div>
+
+    {% if !ics_subscriptions.is_empty() %}
+    <div class="sidebar-section">
+      <div class="sidebar-section-header">
+        <h2>Subscriptions</h2>
+      </div>
+      <ul class="calendar-list">
+        {% for cal in ics_subscriptions %}
+        <li>
+          <a class="cal-toggle visible" href="{{ cal.toggle_href }}" style="--cal-color: {{ cal.color }}">
+            <span class="cal-dot"></span>
+            <span class="cal-name">{{ cal.name }}</span>
+          </a>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+    {% endif %}
+
+    <div class="sidebar-footer">
+      <span class="sidebar-user">{{ username }}</span>
+      <span class="sidebar-footer-links">
+        {% if is_admin %}
+        <a class="btn-link" href="/admin/users">Admin</a>
+        {% endif %}
+        <a class="btn-link" href="/app/settings">Settings</a>
+        <form method="post" action="/logout"><button type="submit" class="btn-link">Sign out</button></form>
+      </span>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <label for="sidebar-toggle" class="btn btn-icon menu-toggle" aria-label="Open menu">☰</label>
+      <h1 class="topbar-title">{{ title }}</h1>
+    </header>
+    <div class="settings-layout">
+      <nav class="settings-nav">
+        <a class="settings-nav-link {% if active_section == "preferences" %}active{% endif %}" href="/app/settings">Preferences</a>
+        <a class="settings-nav-link {% if active_section == "connection" %}active{% endif %}" href="/app/settings/connection">Calendar connection</a>
+        <a class="settings-nav-link {% if active_section == "password" %}active{% endif %}" href="/app/settings/password">Password</a>
+        {% if is_admin %}
+        <div class="settings-nav-divider"></div>
+        <a class="settings-nav-link {% if active_section == "users" %}active{% endif %}" href="/admin/users">Users</a>
+        {% endif %}
+      </nav>
+      <div class="settings-main">
+        {{ body|safe }}
+      </div>
+    </div>
+  </main>
+</div>
+{% endblock %}
