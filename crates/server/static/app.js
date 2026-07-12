@@ -58,6 +58,37 @@
   });
 })();
 
+(function shareEvent() {
+  // Without JS (or without Web Share support), the Share link's own
+  // href+download attributes already do something useful on their own:
+  // the browser just downloads the .ics file. This only upgrades that to
+  // the native share sheet when available, handing over a real file so
+  // the target app (Mail, Messages, another calendar app, …) can import
+  // the event directly instead of getting a link back into this app.
+  document.addEventListener("click", (e) => {
+    const link = e.target.closest("[data-share-url]");
+    if (!link || !navigator.share) return;
+    e.preventDefault();
+    const url = link.getAttribute("data-share-url");
+    const title = link.getAttribute("data-share-title") || "Event";
+    fetch(url)
+      .then((r) => r.blob())
+      .then((blob) => {
+        const file = new File([blob], "event.ics", { type: "text/calendar" });
+        const shareData =
+          navigator.canShare && navigator.canShare({ files: [file] })
+            ? { files: [file], title }
+            : { title, url: location.origin + url };
+        // A rejection here (the user cancelled the share sheet, or the
+        // target app declined) isn't an error worth falling back for.
+        return navigator.share(shareData).catch(() => {});
+      })
+      .catch(() => {
+        window.location.href = url;
+      });
+  });
+})();
+
 (function scrollTimeGrid() {
   function scrollToRelevantHour() {
     const scroller = document.querySelector(".time-grid-scroll");

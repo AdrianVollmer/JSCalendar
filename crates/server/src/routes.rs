@@ -1207,6 +1207,36 @@ pub async fn event_edit_form(
     }
 }
 
+/// A standalone `.ics` download of a single event, for the "Share" button:
+/// works with no JavaScript at all (the browser just downloads/opens the
+/// file), and is what the JS enhancement fetches to hand to the OS share
+/// sheet via the Web Share API.
+pub async fn event_share(
+    session: AuthedSession,
+    Path(id): Path<String>,
+) -> Result<Response, AppError> {
+    let events = session
+        .client
+        .get_events(&session.account_id, &[id])
+        .await?;
+    let event = events.first().ok_or(jmap_client::Error::NotFound)?;
+    let ics = crate::ics::to_ics(event);
+    Ok((
+        [
+            (
+                axum::http::header::CONTENT_TYPE,
+                "text/calendar; charset=utf-8",
+            ),
+            (
+                axum::http::header::CONTENT_DISPOSITION,
+                "attachment; filename=\"event.ics\"",
+            ),
+        ],
+        ics,
+    )
+        .into_response())
+}
+
 // ---- Event mutations ---------------------------------------------------
 
 #[derive(Debug, Deserialize)]

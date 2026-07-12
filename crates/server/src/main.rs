@@ -48,6 +48,7 @@ async fn main() {
             get(routes::event_edit_form).post(routes::event_update),
         )
         .route("/app/event/{id}/delete", post(routes::event_delete_post))
+        .route("/app/event/{id}/ics", get(routes::event_share))
         .route(
             "/app/event/{id}",
             patch(routes::event_update).delete(routes::event_delete_hx),

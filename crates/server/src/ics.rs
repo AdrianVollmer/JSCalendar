@@ -347,9 +347,294 @@ pub(crate) fn parse_line(line: &str) -> Option<(String, Params, String)> {
     Some((name, params, value.to_string()))
 }
 
+/// Serializes a single event back to a standalone iCalendar document (one
+/// `VEVENT`), for the "share this event" download/native-share button —
+/// the inverse of `parse_events`, and just as narrow: only the first
+/// recurrence rule is written (the event editor only ever creates one),
+/// and — like the parser — no `VTIMEZONE` block, just a bare `TZID`
+/// parameter, which every mainstream calendar app resolves against its own
+/// IANA timezone database without complaint.
+pub fn to_ics(event: &CalendarEvent) -> String {
+    let mut lines: Vec<String> = vec![
+        "BEGIN:VCALENDAR".to_string(),
+        "VERSION:2.0".to_string(),
+        "PRODID:-//JSCalendar//EN".to_string(),
+        "BEGIN:VEVENT".to_string(),
+        format!("UID:{}", escape_text(&event.uid)),
+        format!("DTSTAMP:{}", chrono::Utc::now().format("%Y%m%dT%H%M%SZ")),
+    ];
+
+    let start = event.start.to_naive().unwrap_or_default();
+    let duration = parse_duration(&event.duration).unwrap_or_default();
+    let end = start + duration;
+    if event.show_without_time {
+        lines.push(format!("DTSTART;VALUE=DATE:{}", start.format("%Y%m%d")));
+        if !duration.is_zero() {
+            lines.push(format!("DTEND;VALUE=DATE:{}", end.format("%Y%m%d")));
+        }
+    } else {
+        match event.time_zone.as_deref() {
+            Some("UTC") | Some("Etc/UTC") => {
+                lines.push(format!("DTSTART:{}", start.format("%Y%m%dT%H%M%SZ")));
+                if !duration.is_zero() {
+                    lines.push(format!("DTEND:{}", end.format("%Y%m%dT%H%M%SZ")));
+                }
+            }
+            Some(tz) => {
+                lines.push(format!(
+                    "DTSTART;TZID={tz}:{}",
+                    start.format("%Y%m%dT%H%M%S")
+                ));
+                if !duration.is_zero() {
+                    lines.push(format!("DTEND;TZID={tz}:{}", end.format("%Y%m%dT%H%M%S")));
+                }
+            }
+            None => {
+                lines.push(format!("DTSTART:{}", start.format("%Y%m%dT%H%M%S")));
+                if !duration.is_zero() {
+                    lines.push(format!("DTEND:{}", end.format("%Y%m%dT%H%M%S")));
+                }
+            }
+        }
+    }
+
+    if let Some(title) = event.title.as_deref().filter(|s| !s.is_empty()) {
+        lines.push(format!("SUMMARY:{}", escape_text(title)));
+    }
+    if let Some(desc) = event.description.as_deref().filter(|s| !s.is_empty()) {
+        lines.push(format!("DESCRIPTION:{}", escape_text(desc)));
+    }
+    if let Some(loc) = event
+        .locations
+        .as_ref()
+        .and_then(|m| m.values().next())
+        .and_then(|l| l.name.as_deref())
+        .filter(|s| !s.is_empty())
+    {
+        lines.push(format!("LOCATION:{}", escape_text(loc)));
+    }
+    if let Some(rule) = event.recurrence_rules.as_ref().and_then(|r| r.first()) {
+        lines.push(format!("RRULE:{}", rrule_to_ics(rule)));
+    }
+
+    lines.push("END:VEVENT".to_string());
+    lines.push("END:VCALENDAR".to_string());
+    lines.iter().map(|l| fold_line(l)).collect()
+}
+
+fn rrule_to_ics(rule: &RecurrenceRule) -> String {
+    let freq = match rule.frequency {
+        Frequency::Daily => "DAILY",
+        Frequency::Weekly => "WEEKLY",
+        Frequency::Monthly => "MONTHLY",
+        Frequency::Yearly => "YEARLY",
+        Frequency::Hourly => "HOURLY",
+        Frequency::Minutely => "MINUTELY",
+        Frequency::Secondly => "SECONDLY",
+    };
+    let mut parts = vec![format!("FREQ={freq}")];
+    if let Some(interval) = rule.interval.filter(|i| *i > 1) {
+        parts.push(format!("INTERVAL={interval}"));
+    }
+    if let Some(count) = rule.count {
+        parts.push(format!("COUNT={count}"));
+    }
+    if let Some(until) = rule.until.as_ref().and_then(|u| u.to_naive()) {
+        parts.push(format!("UNTIL={}", until.format("%Y%m%dT%H%M%SZ")));
+    }
+    if !rule.by_day.is_empty() {
+        let days: Vec<String> = rule
+            .by_day
+            .iter()
+            .map(|nd| {
+                let day = match nd.day {
+                    Weekday::Monday => "MO",
+                    Weekday::Tuesday => "TU",
+                    Weekday::Wednesday => "WE",
+                    Weekday::Thursday => "TH",
+                    Weekday::Friday => "FR",
+                    Weekday::Saturday => "SA",
+                    Weekday::Sunday => "SU",
+                };
+                match nd.nth_of_period {
+                    Some(n) => format!("{n}{day}"),
+                    None => day.to_string(),
+                }
+            })
+            .collect();
+        parts.push(format!("BYDAY={}", days.join(",")));
+    }
+    if !rule.by_month_day.is_empty() {
+        let days = rule
+            .by_month_day
+            .iter()
+            .map(i32::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        parts.push(format!("BYMONTHDAY={days}"));
+    }
+    if !rule.by_month.is_empty() {
+        parts.push(format!("BYMONTH={}", rule.by_month.join(",")));
+    }
+    if !rule.by_set_position.is_empty() {
+        let positions = rule
+            .by_set_position
+            .iter()
+            .map(i32::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        parts.push(format!("BYSETPOS={positions}"));
+    }
+    parts.join(";")
+}
+
+/// RFC 5545 TEXT escaping: backslash, comma, and semicolon are structural
+/// (used for list separators / parameter delimiters), and newlines have no
+/// literal representation in a single content line.
+fn escape_text(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            ';' => out.push_str("\\;"),
+            ',' => out.push_str("\\,"),
+            '\n' => out.push_str("\\n"),
+            '\r' => {}
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// Folds a content line to RFC 5545's 75-octet limit: continuation lines
+/// are joined with CRLF followed by a single leading space, which readers
+/// strip back out (see `unfold`) to reconstruct the original line.
+fn fold_line(line: &str) -> String {
+    const LIMIT: usize = 75;
+    if line.len() <= LIMIT {
+        return format!("{line}\r\n");
+    }
+    let mut out = String::new();
+    let mut chunk_start = 0;
+    let mut chunk_len = 0;
+    let mut first = true;
+    for (i, ch) in line.char_indices() {
+        let budget = if first { LIMIT } else { LIMIT - 1 };
+        if chunk_len + ch.len_utf8() > budget && i > chunk_start {
+            out.push_str(&line[chunk_start..i]);
+            out.push_str("\r\n ");
+            chunk_start = i;
+            chunk_len = 0;
+            first = false;
+        }
+        chunk_len += ch.len_utf8();
+    }
+    out.push_str(&line[chunk_start..]);
+    out.push_str("\r\n");
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jmap_client::jscalendar::Location;
+
+    #[test]
+    fn to_ics_writes_summary_location_and_timed_range() {
+        let mut event = CalendarEvent::new(
+            "evt1@example.com",
+            LocalDateTime::from_naive(
+                NaiveDateTime::parse_from_str("2026-07-15T09:00:00", "%Y-%m-%dT%H:%M:%S").unwrap(),
+            ),
+        );
+        event.title = Some("Standup".to_string());
+        event.description = Some("Daily sync".to_string());
+        event.time_zone = Some("Europe/Berlin".to_string());
+        event.duration = "PT15M".to_string();
+        let mut locations = BTreeMap::new();
+        locations.insert(
+            "loc1".to_string(),
+            Location {
+                name: Some("Room, 2nd floor".to_string()),
+                ..Default::default()
+            },
+        );
+        event.locations = Some(locations);
+
+        let ics = to_ics(&event);
+        assert!(ics.contains("BEGIN:VCALENDAR"));
+        assert!(ics.contains("UID:evt1@example.com"));
+        assert!(ics.contains("SUMMARY:Standup"));
+        assert!(ics.contains("DESCRIPTION:Daily sync"));
+        assert!(ics.contains("LOCATION:Room\\, 2nd floor"));
+        assert!(ics.contains("DTSTART;TZID=Europe/Berlin:20260715T090000"));
+        assert!(ics.contains("DTEND;TZID=Europe/Berlin:20260715T091500"));
+        assert!(ics.ends_with("END:VCALENDAR\r\n"));
+    }
+
+    #[test]
+    fn to_ics_round_trips_through_parse_events() {
+        let mut event = CalendarEvent::new(
+            "roundtrip1",
+            LocalDateTime::from_naive(
+                NaiveDateTime::parse_from_str("2026-03-01T14:00:00", "%Y-%m-%dT%H:%M:%S").unwrap(),
+            ),
+        );
+        event.title = Some("Planning".to_string());
+        event.duration = "PT30M".to_string();
+
+        let ics = to_ics(&event);
+        let parsed = parse_events(&ics, "sub1");
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].title.as_deref(), Some("Planning"));
+        assert_eq!(parsed[0].duration, "PT30M");
+    }
+
+    #[test]
+    fn to_ics_writes_all_day_and_recurrence() {
+        let mut event = CalendarEvent::new(
+            "allday1",
+            LocalDateTime::from_naive(
+                NaiveDateTime::parse_from_str("2026-12-25T00:00:00", "%Y-%m-%dT%H:%M:%S").unwrap(),
+            ),
+        );
+        event.title = Some("Holiday".to_string());
+        event.show_without_time = true;
+        event.duration = "P1D".to_string();
+        event.recurrence_rules = Some(vec![RecurrenceRule {
+            type_: "RecurrenceRule".to_string(),
+            frequency: Frequency::Yearly,
+            interval: None,
+            count: None,
+            until: None,
+            by_day: vec![],
+            by_month_day: vec![],
+            by_month: vec![],
+            by_set_position: vec![],
+            extra: BTreeMap::new(),
+        }]);
+
+        let ics = to_ics(&event);
+        assert!(ics.contains("DTSTART;VALUE=DATE:20261225"));
+        // A single-day all-day event still gets an explicit (exclusive)
+        // DTEND rather than relying on the implicit one-day default.
+        assert!(ics.contains("DTEND;VALUE=DATE:20261226"));
+        assert!(ics.contains("RRULE:FREQ=YEARLY"));
+    }
+
+    #[test]
+    fn escape_text_escapes_special_characters() {
+        assert_eq!(escape_text("a, b; c\\d\ne"), "a\\, b\\; c\\\\d\\ne");
+    }
+
+    #[test]
+    fn fold_line_wraps_long_lines_and_unfolds_cleanly() {
+        let long = format!("DESCRIPTION:{}", "x".repeat(200));
+        let folded = fold_line(&long);
+        assert!(folded.contains("\r\n "));
+        let unfolded = unfold(&folded);
+        assert_eq!(unfolded, vec![long]);
+    }
 
     #[test]
     fn parses_simple_timed_event() {

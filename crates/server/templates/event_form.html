@@ -106,6 +106,7 @@
     <footer class="event-form-footer">
       {% if is_edit %}
       <button type="submit" formaction="/app/event/{{ event_id }}/delete" formnovalidate hx-delete="/app/event/{{ event_id }}" hx-target="#modal-root" hx-swap="innerHTML" hx-confirm="Delete this event?" class="btn btn-danger">Delete</button>
+      <a class="btn btn-ghost" href="/app/event/{{ event_id }}/ics" download="event.ics" data-share-url="/app/event/{{ event_id }}/ics" data-share-title="{{ title }}">Share</a>
       {% endif %}
       <span class="spacer"></span>
       <a class="btn btn-ghost" href="/app?view={{ back_view }}&amp;date={{ back_date }}&amp;cal={{ back_cal }}">Cancel</a>

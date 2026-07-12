@@ -157,6 +157,18 @@ it manually instead.
 
 ## What's implemented
 
+- Share an event (the "Share" button on an existing event's edit form)
+  hands it to the OS-level share sheet via the Web Share API
+  (`navigator.share`) as a real `.ics` file when the browser supports
+  file sharing, so the receiving app — Mail, Messages, another calendar
+  app — can import it directly rather than getting a link back into this
+  app. Degrades gracefully without JavaScript or Web Share support: the
+  same button is a plain link to `GET /app/event/{id}/ics`, so it just
+  downloads the file instead. The `.ics` is generated server-side
+  (`ics::to_ics`, the write-side counterpart of the ICS-subscription
+  parser) from whatever's on that event right now — title, time
+  (including a `TZID` for zoned events, `VALUE=DATE` for all-day ones),
+  location, description, and its recurrence rule if it has one.
 - Session discovery, `Calendar/get`, `Calendar/set`, `CalendarEvent/get`,
   `CalendarEvent/query` + `CalendarEvent/get` chained via a JMAP result
   reference, `CalendarEvent/set`.
@@ -262,8 +274,12 @@ it manually instead.
   `JSCAL_HOLIDAYS_REGION`) and can be overridden per-browser from the
   Settings page, but there's no automatic detection of the browser's own
   time zone; you still have to pick it yourself once.
-- Participants/attendees, alerts, and sharing (`Calendar/set` `shareWith`)
-  are modeled in `jmap-client` but not surfaced in the UI yet.
+- Participants/attendees, alerts, and calendar-to-calendar sharing
+  (`Calendar/set` `shareWith`, i.e. granting another JMAP account access to
+  a calendar) are modeled in `jmap-client` but not surfaced in the UI yet.
+  Sharing a single *event* out to other apps on the device (Mail, Messages,
+  a different calendar app, …) is covered by the Share button described
+  above, which is unrelated to JMAP sharing.
 - The ICS parser ignores `VTIMEZONE` blocks: a `DTSTART` with a `TZID`
   parameter but no trailing `Z` is treated as floating rather than
   resolved against the named zone. `VALARM`, `ATTENDEE`, and per-instance
