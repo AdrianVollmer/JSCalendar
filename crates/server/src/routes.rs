@@ -1957,6 +1957,36 @@ pub async fn contact_edit_form(
     }
 }
 
+/// A `.vcf` download of every contact in the account's address book, for
+/// the Contacts view's "Export" button — the counterpart of "Import".
+/// Works with no JavaScript: it's a plain link the browser just downloads.
+pub async fn contact_export(
+    State(state): State<AppState>,
+    session: AuthedSession,
+) -> Result<Response, AppError> {
+    let Some(contacts_account_id) = session.contacts_account_id.clone() else {
+        return Err(AppError::bad_request(
+            "this server does not support contacts",
+        ));
+    };
+    let cards = get_contact_cards_cached(&state, &session, &contacts_account_id).await?;
+    let vcf: String = cards.iter().map(vcard::to_vcard).collect();
+    Ok((
+        [
+            (
+                axum::http::header::CONTENT_TYPE,
+                "text/vcard; charset=utf-8",
+            ),
+            (
+                axum::http::header::CONTENT_DISPOSITION,
+                "attachment; filename=\"contacts.vcf\"",
+            ),
+        ],
+        vcf,
+    )
+        .into_response())
+}
+
 // ---- Contact bulk import --------------------------------------------------
 
 struct ImportResult {

@@ -490,8 +490,9 @@ fn rrule_to_ics(rule: &RecurrenceRule) -> String {
 
 /// RFC 5545 TEXT escaping: backslash, comma, and semicolon are structural
 /// (used for list separators / parameter delimiters), and newlines have no
-/// literal representation in a single content line.
-fn escape_text(s: &str) -> String {
+/// literal representation in a single content line. Shared with
+/// `crate::vcard`'s writer — vCard (RFC 6350 §3.4) escapes the same way.
+pub(crate) fn escape_text(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         match c {
@@ -508,8 +509,9 @@ fn escape_text(s: &str) -> String {
 
 /// Folds a content line to RFC 5545's 75-octet limit: continuation lines
 /// are joined with CRLF followed by a single leading space, which readers
-/// strip back out (see `unfold`) to reconstruct the original line.
-fn fold_line(line: &str) -> String {
+/// strip back out (see `unfold`) to reconstruct the original line. Shared
+/// with `crate::vcard`'s writer — vCard folds lines the same way.
+pub(crate) fn fold_line(line: &str) -> String {
     const LIMIT: usize = 75;
     if line.len() <= LIMIT {
         return format!("{line}\r\n");

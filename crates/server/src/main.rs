@@ -59,6 +59,7 @@ async fn main() {
             "/app/contact/import",
             get(routes::contact_import_form).post(routes::contact_import),
         )
+        .route("/app/contact/export", get(routes::contact_export))
         .route(
             "/app/contact/{id}/edit",
             get(routes::contact_edit_form).post(routes::contact_update),

@@ -224,7 +224,11 @@ it manually instead.
   view accepts a `.vcf` (vCard) file exported from another address book
   and bulk-creates a contact per entry (name, one email, birthday — the
   same fields the regular contact form supports), reporting how many were
-  imported; up to 500 contacts per file.
+  imported; up to 500 contacts per file. An "Export" button goes the other
+  way: downloads every contact in the address book as one `.vcf` file
+  (`vcard::to_vcard`, the write-side counterpart of the import parser),
+  for backing up or moving to another address book. Works with no
+  JavaScript — it's a plain link the browser just downloads.
 - Subscribed iCal-URL calendars: a "Subscriptions" section in the sidebar
   (separate from the real "Calendars" section) lets you add any public
   `.ics` URL as a read-only overlay calendar, with its own name/color and

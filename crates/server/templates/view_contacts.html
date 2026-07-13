@@ -8,6 +8,7 @@
         hx-trigger="keyup changed delay:300ms, search" hx-preserve="true" autocomplete="off">
     </form>
     <a class="btn btn-ghost" href="/app/contact/import?view=contacts&amp;cal={{ cal_param }}" hx-get="/app/contact/import?view=contacts&amp;cal={{ cal_param }}" hx-target="#modal-root" hx-swap="innerHTML">Import</a>
+    <a class="btn btn-ghost" href="/app/contact/export" download="contacts.vcf">Export</a>
   </div>
 
   {% if contacts.is_empty() %}

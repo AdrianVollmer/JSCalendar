@@ -13,8 +13,9 @@
 //! photos, notes, ...) is ignored.
 
 use chrono::NaiveDate;
+use jmap_client::jscontact::Card;
 
-use crate::ics::{parse_line, unescape_text, unfold, Params};
+use crate::ics::{escape_text, fold_line, parse_line, unescape_text, unfold, Params};
 
 pub struct ParsedContact {
     pub name: String,
@@ -50,6 +51,44 @@ pub fn parse_vcards(text: &str) -> Vec<ParsedContact> {
         }
     }
     out
+}
+
+/// Serializes a single contact card to a standalone vCard — the write-side
+/// counterpart of `parse_vcards`, just as narrow: display name, every
+/// email address, and a birth anniversary if there is one. Everything
+/// else JSContact can carry (phone numbers, addresses, photos, notes, …)
+/// isn't modeled by this app in the first place, so there's nothing to
+/// export for it.
+pub fn to_vcard(card: &Card) -> String {
+    let mut lines = vec!["BEGIN:VCARD".to_string(), "VERSION:3.0".to_string()];
+    let name = card
+        .name
+        .as_ref()
+        .and_then(|n| n.full.as_deref())
+        .unwrap_or_default();
+    lines.push(format!("FN:{}", escape_text(name)));
+    lines.push(format!("N:{};;;;", escape_text(name)));
+    if let Some(emails) = &card.emails {
+        for email in emails.values() {
+            lines.push(format!("EMAIL:{}", escape_text(&email.address)));
+        }
+    }
+    if let Some(birth) = card
+        .anniversaries
+        .as_ref()
+        .and_then(|m| m.values().find(|a| a.kind.as_deref() == Some("birth")))
+    {
+        if let Some((month, day, year)) = birth.date.month_day_year() {
+            let value = match year {
+                Some(y) => format!("{y:04}-{month:02}-{day:02}"),
+                None => format!("--{month:02}{day:02}"),
+            };
+            lines.push(format!("BDAY:{value}"));
+        }
+    }
+    lines.push(format!("UID:{}", escape_text(&card.uid)));
+    lines.push("END:VCARD".to_string());
+    lines.iter().map(|l| fold_line(l)).collect()
 }
 
 #[derive(Default)]
@@ -148,6 +187,91 @@ fn parse_bday(raw: &str, params: &[(String, String)]) -> Option<(NaiveDate, bool
 mod tests {
     use super::*;
     use chrono::Datelike;
+    use jmap_client::jscontact::{Anniversary, AnniversaryDate, EmailAddress, NameProperty};
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn to_vcard_writes_name_email_and_full_birthday() {
+        let mut card = Card::new("uid1");
+        card.name = Some(NameProperty {
+            full: Some("Ada Lovelace".to_string()),
+            ..Default::default()
+        });
+        let mut emails = BTreeMap::new();
+        emails.insert(
+            "e1".to_string(),
+            EmailAddress {
+                address: "ada@example.com".to_string(),
+                ..Default::default()
+            },
+        );
+        card.emails = Some(emails);
+        let mut anniversaries = BTreeMap::new();
+        anniversaries.insert(
+            "a1".to_string(),
+            Anniversary {
+                type_: "Anniversary".to_string(),
+                kind: Some("birth".to_string()),
+                date: AnniversaryDate::Timestamp {
+                    utc: "1815-12-10T00:00:00Z".to_string(),
+                },
+                extra: BTreeMap::new(),
+            },
+        );
+        card.anniversaries = Some(anniversaries);
+
+        let vcf = to_vcard(&card);
+        assert!(vcf.starts_with("BEGIN:VCARD\r\n"));
+        assert!(vcf.contains("FN:Ada Lovelace"));
+        assert!(vcf.contains("EMAIL:ada@example.com"));
+        assert!(vcf.contains("BDAY:1815-12-10"));
+        assert!(vcf.contains("UID:uid1"));
+        assert!(vcf.ends_with("END:VCARD\r\n"));
+    }
+
+    #[test]
+    fn to_vcard_round_trips_through_parse_vcards() {
+        let mut card = Card::new("uid2");
+        card.name = Some(NameProperty {
+            full: Some("Grace Hopper".to_string()),
+            ..Default::default()
+        });
+        let mut anniversaries = BTreeMap::new();
+        anniversaries.insert(
+            "a1".to_string(),
+            Anniversary {
+                type_: "Anniversary".to_string(),
+                kind: Some("birth".to_string()),
+                date: AnniversaryDate::PartialDate {
+                    year: None,
+                    month: Some(7),
+                    day: Some(20),
+                },
+                extra: BTreeMap::new(),
+            },
+        );
+        card.anniversaries = Some(anniversaries);
+
+        let vcf = to_vcard(&card);
+        let parsed = parse_vcards(&vcf);
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].name, "Grace Hopper");
+        let (date, has_year) = parsed[0].birthday.unwrap();
+        assert_eq!(date.month(), 7);
+        assert_eq!(date.day(), 20);
+        assert!(!has_year);
+    }
+
+    #[test]
+    fn to_vcard_escapes_commas_in_name() {
+        let mut card = Card::new("uid3");
+        card.name = Some(NameProperty {
+            full: Some("Doe, Jane".to_string()),
+            ..Default::default()
+        });
+        let vcf = to_vcard(&card);
+        assert!(vcf.contains("FN:Doe\\, Jane"));
+    }
 
     #[test]
     fn parses_fn_email_and_full_birthday() {
